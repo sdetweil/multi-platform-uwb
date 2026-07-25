@@ -101,13 +101,13 @@ actual class BleManager(
         Log.d(TAG, "received accessory config from $peerId (${raw.size} bytes)")
         val remoteConfig = raw.let { UwbSessionConfig.fromByteArray(it, true) }
         if (remoteConfig != null) {
-            if (localConfig == null) { // we need our own address to send to the accessory (controller)
+            if (MultiplatformUwbManager.getConnectionConfig[peerId] == null) { // we need our own address to send to the accessory (controller)
                 Log.e(TAG, "local config not created")
                 return
             }
             // accessory has decided on anything except its hwAddress, so use the local scope.... to run the session
             // this is cause the local uwbSessionConfig to be sent to the accessory which has all the same data except OUR hwAddress
-            val rangingRemoteConfig= MultiplatformUwbManager.getLocalConfig[peerId].copy(remoteConfig.hwAddress)
+            val rangingRemoteConfig= MultiplatformUwbManager.getConnectionConfig[peerId].copy(remoteConfig?.hwAddress)
             configExchangedCallback?.invoke(peerId, rangingRemoteConfig) // this starts ranging
         } else {
             Log.e(TAG, "failed to parse config from $peerId")
@@ -199,9 +199,9 @@ actual class BleManager(
                 it.readFromUuid.equals(characteristic.uuid.toString(), ignoreCase = true)
             }
             if (isReadChar) {
-                var connectionConfig=MultiplatformUwbManager.getLocalConfig(device.address)
+                var connectionConfig=MultiplatformUwbManager.getConnectionConfig(device.address)
                 connectionLocalConfig = if(connectionLocalConfig==null){
-                           MultiplatformUwbManager.createLocalConfig(device.address,false)
+                           MultiplatformUwbManager.createConnectionConfig(device.address,false)
                    } else {
                            connectionLocalConfig
                    }
@@ -414,7 +414,6 @@ actual class BleManager(
         try {
             gattServer?.close()
             gattServer = null
-            localConfig = null
             Log.d(TAG, "GATT server stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping GATT server: ${e.message}")
@@ -451,7 +450,7 @@ actual class BleManager(
     // ---- Public API: GATT Client (config exchange) ----
 
     @RequiresPermission(BLUETOOTH_CONNECT)
-    actual fun connectAndExchangeConfig(peerId: String, localConfig: UwbSessionConfig) {
+    actual fun connectAndExchangeConfig(peerId: String, connectionConfig: UwbSessionConfig) {
         val device = discoveredDevices[peerId]?.bleDevice
         if (device == null) {
             Log.e(TAG, "No BluetoothDevice cached for $peerId")
@@ -574,7 +573,7 @@ actual class BleManager(
                         if (writeChar != null) {
                             queue?.enqueue(
                                 BleCommand.WriteCharacteristic(
-                                    writeChar, localConfig.toByteArray(),
+                                    writeChar, connectionConfig.toByteArray(),
                                     BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                                 )
                             )

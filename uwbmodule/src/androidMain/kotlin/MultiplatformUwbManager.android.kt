@@ -78,7 +78,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
         }
     }
 
-    actual suspend fun createLocalConfig(peerId: String, isAccessory: Boolean ): UwbSessionConfig? {
+    actual suspend fun createConnectionConfig(peerId: String, isAccessory: Boolean ): UwbSessionConfig? {
         val localScope = if(isAccessory){
             androidUwbManager?.controllerSessionScope()
         } else {
@@ -105,7 +105,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
             localScope?.let {
                 sessionId?.let { it1 ->
                     UwbSessionConfig(
-                        timeStamp = TimeUtils.getMilliseconds(),
+                        timestamp = TimeUtils.getMilliseconds(),
                         scope = it,
                         sessionId = it1,
                         channel = DEFAULT_CHANNEL,
@@ -123,8 +123,8 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
         return connectionConfig
     }
 
-    actual fun getConnectionConfig[peerId:String) ->UwbSessionConfig? {
-        return if(connectioConfigs[peerId != null){
+    actual fun getConnectionConfig(peerId:String):UwbSessionConfig? {
+        return if(connectioConfigs[peerId] != null){
              connectionConfigs[peerId]
         } else {
              null
@@ -151,8 +151,8 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                     sessionKeyInfo = remoteConfig.sessionKey,
                     subSessionKeyInfo = null,
                     complexChannel = UwbComplexChannel(
-                        channel = remoteConfg.channel,
-                        preambleIndex = remoteConfg.preambleIndex
+                        channel = remoteConfig.channel,
+                        preambleIndex = remoteConfig.preambleIndex
                     ),
                     peerDevices = listOf(peerDevice),
                     updateRateType = RangingParameters.RANGING_UPDATE_RATE_AUTOMATIC
@@ -164,7 +164,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                 )
                 // if this is an accessory, send the config it should use now, as we have done all the pre-checking
                 if(remoteConfig.isAccessoryDevice) {
-                    val message = byteArrayOf(ANDROID_ACCESSORY_CONFIGURE_AND_START)+ activeSessions[peerId].toByteArray()
+                    val message = byteArrayOf(ANDROID_ACCESSORY_CONFIGURE_AND_START)+ activeSessions[peerId]?.toByteArray()
                     Log.d(TAG, "sending config data message to accessory=${message.toHexString()}")
                     activeSessions[peerId].toByteArray().let { sendToPeerCallback?.invoke(peerId, message) }
                 }
@@ -218,7 +218,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
         }
 
     actual suspend fun stopRanging(peerId: String) {
-        (activeSessions.scope as UwbSessionConfig).pause()
+        (activeSessions[peerId].scope as UwbSessionConfig).pause()
         activeSessions.remove((peerId))
         activeJobs.remove(peerId)?.let { job ->
             job.cancel()

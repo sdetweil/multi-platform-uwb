@@ -50,14 +50,14 @@ actual class BleManager(
     private fun deliverRemoteConfig(peerId: String, bytes: ByteArray?) {
         val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it) }
         if (remoteConfig != null) {
-            val connectionLocalConfig=MultiplatformUwbManager.getLocalConfig(peerId,false)
+            val connectionLocalConfig=MultiplatformUwbManager.getConnectionConfig(peerId,false)
             val rangingRemoteConfig=if(remoteConfig.isOlder(connectionLocalConfig)){
                  remoteConfig.copy(scope=connectionLocalConfig.scope)
             }
             else {
-                 connectionLocalConfig.copy(remoteConfig.hwAddress)
+                 connectionLocalConfig.copy(hwAddress=remoteConfig.hwAddress)
             }
-            Log.d(TAG, "received config from $peerId")
+            NSLog("received config from $peerId")
             configExchangedCallback?.invoke(peerId, rangingRemoteConfig)
         } else {
             NSLog("BleManager: failed to parse config from $peerId")
@@ -67,7 +67,7 @@ actual class BleManager(
     /** Deliver an accessory's raw configuration blob (opaque — wrapped, not parsed as our envelope). */
     private fun deliverAccessoryConfig(peerId: String, raw: ByteArray) {
         NSLog("BleManager: received accessory config from $peerId (${raw.size} bytes)")
-        configExchangedCallback?.invoke(peerId, UwbSessionConfig(0,0,0, 0, 0, 0, ByteArray(0), accessoryData = raw))
+        configExchangedCallback?.invoke(peerId, UwbSessionConfig(0UL,0,0, 0, 0, ByteArray(0), accessoryData = raw))
     }
 
     /** Find a characteristic on a discovered service by UUID string (CBUUID normalizes short/long). */
@@ -359,9 +359,9 @@ actual class BleManager(
                 didReceiveReadRequest.characteristic.UUID == CBUUID.UUIDWithString(it.readFromUuid!!)
             }
             if (isReadChar) {                
-                var connectionConfig=MultiplatformUwbManager.getLocalConfig(device.address)
+                var connectionLocalConfig=MultiplatformUwbManager.getConnectionConfig(device.address)
                 connectionLocalConfig = if(connectionLocalConfig==null){
-                           MultiplatformUwbManager.createLocalConfig(device.address,false)
+                           MultiplatformUwbManager.createConnectionConfig(device.address,false)
                    } else {
                            connectionLocalConfig
                    }
@@ -489,14 +489,13 @@ actual class BleManager(
 
     actual fun stopGattServer() {
         peripheralManager?.removeAllServices()
-        localConfig = null
         readCharacteristic = null
         NSLog("BleManager: GATT server stopped")
     }
 
     // ---- Public API: GATT Client (config exchange) ----
 
-    actual fun connectAndExchangeConfig(peerId: String, localConfig: UwbSessionConfig) {
+    actual fun connectAndExchangeConfig(peerId: String, connectionConfig: UwbSessionConfig) {
         NSLog("BleManager: in connect and config")
         val peripheral = discoveredPeripherals[peerId]?.bleDevice
         if (peripheral == null) {
@@ -504,7 +503,7 @@ actual class BleManager(
             return
         }
 
-        pendingConfigs[peerId] = localConfig
+        pendingConfigs[peerId] = connectionConfig
         centralManager?.connectPeripheral(peripheral, null)
         NSLog("BleManager: Connecting to $peerId for config exchange")
     }

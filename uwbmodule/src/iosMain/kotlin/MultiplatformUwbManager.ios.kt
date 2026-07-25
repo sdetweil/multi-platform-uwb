@@ -68,7 +68,7 @@ actual class MultiplatformUwbManager {
         }
     }
 
-    actual suspend fun createLocalConfig(peerId:String, isAccessory:Boolean): UwbSessionConfig? {
+    actual suspend fun createConnectionConfig(peerId:String, isAccessory:Boolean): UwbSessionConfig? {
 
         val session = NISession();
         val delegate = SessionDelegate()
@@ -116,7 +116,7 @@ actual class MultiplatformUwbManager {
         return connectioConfigs[peerId]
     }
 
-    actual fun getLocalConfig(peerid:String): UwbSessionConfig {
+    actual fun getConnectionConfig(peerid:String): UwbSessionConfig {
         return connectionConfigs[peerId]
     }
     
@@ -171,7 +171,7 @@ actual class MultiplatformUwbManager {
         }
 
         activePeers[peerId] = peerToken
-        activeSessions[peerId] = sessionConfig as UwbSessionConfig
+        activeSessions[peerId] = remoteConfig
         // Create a peer configuration with the exchanged token
         val config = NINearbyPeerConfiguration(peerToken)
 
@@ -185,7 +185,7 @@ actual class MultiplatformUwbManager {
             ((activeSessions[peerId]?.scope) as NISession).pause()
             activeDelegates.remove((activeSessions[peerId]?.scope) as NISession)
             activeSessions.remove(peerId)
-            connectioConfigs.remove(peerid)
+            connectionConfigs.remove(peerid)
             NSLog("UwbManager: Paused session (no active peers)")
         }
     }
@@ -205,7 +205,7 @@ actual class MultiplatformUwbManager {
     actual suspend fun cleanup() {
         activePeers.clear()
         activeSessions.clear()
-        connectioConfigs.clear()
+        connectionConfigs.clear()
         NSLog("UwbManager: Cleanup completed")
     }
 
