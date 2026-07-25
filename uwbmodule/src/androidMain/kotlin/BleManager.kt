@@ -86,7 +86,7 @@ actual class BleManager(
                  remoteConfig.copy(scope=connectionLocalConfig.scope)
             }
             else {
-                 connectionLocalConfig.copy(remoteConfig.hwAddress)
+                 connectionLocalConfig.copy(hwAddress=remoteConfig.hwAddress)
             }
             Log.d(TAG, "received config from $peerId")
             configExchangedCallback?.invoke(peerId, rangingRemoteConfig)

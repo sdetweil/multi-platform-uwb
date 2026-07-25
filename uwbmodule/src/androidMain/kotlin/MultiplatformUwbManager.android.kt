@@ -95,13 +95,12 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
 
         // Generate the static-STS key lazily and cache it, so the key we send over
         // BLE is the same one we compare/use when ranging starts.
-        val key = localSessionKey ?: ByteArray(SESSION_KEY_SIZE)
+        val key = ByteArray(SESSION_KEY_SIZE)
             .also { SecureRandom().nextBytes(it) }
-            .also { localSessionKey = it }
 
         Log.d(TAG, "phone address is ${localAddress?.toHexString()}")
 
-        val connectionConfig = if(sessionId !=0 ) {
+        val connectionConfig? = if(sessionId !=0 ) {
             localScope?.let {
                 sessionId?.let { it1 ->
                     UwbSessionConfig(
@@ -142,7 +141,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                 // Use the remote peer's UWB address
                 val peerAddress = UwbAddress(remoteConfig.uwbAddress)
                 val peerDevice = UwbDevice(peerAddress)
-                Log.d(TAG, "ranging peer device address is ${agreed.uwbAddress.toHexString()}")
+                Log.d(TAG, "ranging peer device address is ${remoteConfog.uwbAddress.toHexString()}")
 
                 val rangingParameters: RangingParameters = RangingParameters(
                     uwbConfigType = RangingParameters.CONFIG_UNICAST_DS_TWR,
@@ -166,7 +165,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                 if(remoteConfig.isAccessoryDevice) {
                     val message = byteArrayOf(ANDROID_ACCESSORY_CONFIGURE_AND_START)+ activeSessions[peerId]?.toByteArray()
                     Log.d(TAG, "sending config data message to accessory=${message.toHexString()}")
-                    activeSessions[peerId].toByteArray().let { sendToPeerCallback?.invoke(peerId, message) }
+                    activeSessions[peerId]?.toByteArray().let { sendToPeerCallback?.invoke(peerId, message) }
                 }
 
 
@@ -218,7 +217,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
         }
 
     actual suspend fun stopRanging(peerId: String) {
-        (activeSessions[peerId].scope as UwbSessionConfig).pause()
+        (activeSessions[peerId]?.scope as UwbSessionConfig).pause()
         activeSessions.remove(peerId)
         activeJobs.remove(peerId)?.let { job ->
             job.cancel()

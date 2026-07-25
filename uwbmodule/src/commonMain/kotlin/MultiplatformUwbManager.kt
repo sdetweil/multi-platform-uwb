@@ -22,7 +22,7 @@ expect class MultiplatformUwbManager {
      */
     suspend fun createConnectionConfig(peerId:String, isAccessory:Boolean): UwbSessionConfig?
 
-    suspend fun getConnectionConfig(peerId: String): UwbSessionConfig
+    suspend fun getConnectionConfig(peerId: String): UwbSessionConfig?
     /**
      * Start ranging with a peer using exchanged configurations.
      *

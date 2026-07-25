@@ -50,7 +50,7 @@ actual class BleManager(
     private fun deliverRemoteConfig(peerId: String, bytes: ByteArray?) {
         val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it) }
         if (remoteConfig != null) {
-            val connectionLocalConfig=MultiplatformUwbManager.getConnectionConfig(peerId,false)
+            val connectionLocalConfig=MultiplatformUwbManager.getConnectionConfig(peerId)
             val rangingRemoteConfig=if(remoteConfig.isOlder(connectionLocalConfig)){
                  remoteConfig.copy(scope=connectionLocalConfig.scope)
             }
@@ -77,7 +77,7 @@ actual class BleManager(
         return service.characteristics?.firstOrNull { (it as? CBCharacteristic)?.UUID == target } as? CBCharacteristic
     }
 
-    private fun addGattService(entry: profile) {
+    private fun addGattService(entry: Profile) {
         // Read-only; server-side accessory tx-notify is out of scope (we only host phone-to-phone).
         val readChar = CBMutableCharacteristic(
             type = CBUUID.UUIDWithString(entry.readFromUuid!!),
@@ -358,10 +358,11 @@ actual class BleManager(
             val isReadChar = serverProfiles().any {
                 didReceiveReadRequest.characteristic.UUID == CBUUID.UUIDWithString(it.readFromUuid!!)
             }
-            if (isReadChar) {                
-                var connectionLocalConfig=MultiplatformUwbManager.getConnectionConfig(device.address)
+            if (isReadChar) {
+                val peerId = didReceiveReadRequest.central.identifier.UUIDString                
+                var connectionLocalConfig=MultiplatformUwbManager.getConnectionConfig(peerId)
                 connectionLocalConfig = if(connectionLocalConfig==null){
-                           MultiplatformUwbManager.createConnectionConfig(device.address,false)
+                           MultiplatformUwbManager.createConnectionConfig(peerId,false)
                    } else {
                            connectionLocalConfig
                    }

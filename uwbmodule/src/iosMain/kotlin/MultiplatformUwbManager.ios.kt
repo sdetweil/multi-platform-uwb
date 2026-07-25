@@ -116,7 +116,7 @@ actual class MultiplatformUwbManager {
         return connectioConfigs[peerId]
     }
 
-    actual fun getConnectionConfig(peerid:String): UwbSessionConfig {
+    actual fun getConnectionConfig(peerId:String): UwbSessionConfig? {
         return connectionConfigs[peerId]
     }
     
@@ -140,7 +140,7 @@ actual class MultiplatformUwbManager {
                     NSLog("MultiPlatformMgr device DOES NOT support camera assistance")
                 }
             }
-            activeSessions[peerId]= sessionConfig as UwbSessionConfig
+            activeSessions[peerId]= remoteConfig
             NSLog("UwbManager: Starting accessory ranging with $peerId")
             (sessionConfig.scope as NISession).runWithConfiguration(config)
             return
@@ -176,7 +176,7 @@ actual class MultiplatformUwbManager {
         val config = NINearbyPeerConfiguration(peerToken)
 
         NSLog("UwbManager: Starting ranging with $peerId")
-        (sessionConfig.scope as NISession).runWithConfiguration(config)
+        (remoteConfig.scope as NISession).runWithConfiguration(config)
     }
 
     actual suspend fun stopRanging(peerId: String) {
@@ -185,7 +185,7 @@ actual class MultiplatformUwbManager {
             ((activeSessions[peerId]?.scope) as NISession).pause()
             activeDelegates.remove((activeSessions[peerId]?.scope) as NISession)
             activeSessions.remove(peerId)
-            connectionConfigs.remove(peerid)
+            connectionConfigs.remove(peerId)
             NSLog("UwbManager: Paused session (no active peers)")
         }
     }
