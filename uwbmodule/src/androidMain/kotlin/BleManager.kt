@@ -81,7 +81,7 @@ actual class BleManager(
     private fun deliverRemoteConfig(peerId: String, bytes: ByteArray?) {
         val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it) }
         if (remoteConfig != null) {
-            val connectionLocalConfig=MultiplatformUwbManager.getLocalConfig(peerId)
+            val connectionLocalConfig=MultiplatformUwbManager.getConnectionConfig(peerId)
             val rangingRemoteConfig=if(remoteConfig.isOlder(connectionLocalConfig)){
                  remoteConfig.copy(scope=connectionLocalConfig.scope)
             }
@@ -101,13 +101,13 @@ actual class BleManager(
         Log.d(TAG, "received accessory config from $peerId (${raw.size} bytes)")
         val remoteConfig = raw.let { UwbSessionConfig.fromByteArray(it, true) }
         if (remoteConfig != null) {
-            if (MultiplatformUwbManager.getConnectionConfig[peerId] == null) { // we need our own address to send to the accessory (controller)
+            if (MultiplatformUwbManager.getConnectionConfig(peerId) == null) { // we need our own address to send to the accessory (controller)
                 Log.e(TAG, "local config not created")
                 return
             }
             // accessory has decided on anything except its hwAddress, so use the local scope.... to run the session
             // this is cause the local uwbSessionConfig to be sent to the accessory which has all the same data except OUR hwAddress
-            val rangingRemoteConfig= MultiplatformUwbManager.getConnectionConfig[peerId].copy(remoteConfig?.hwAddress)
+            val rangingRemoteConfig= MultiplatformUwbManager.getConnectionConfig(peerId).copy(remoteConfig?.hwAddress)
             configExchangedCallback?.invoke(peerId, rangingRemoteConfig) // this starts ranging
         } else {
             Log.e(TAG, "failed to parse config from $peerId")

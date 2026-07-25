@@ -219,7 +219,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
 
     actual suspend fun stopRanging(peerId: String) {
         (activeSessions[peerId].scope as UwbSessionConfig).pause()
-        activeSessions.remove((peerId))
+        activeSessions.remove(peerId)
         activeJobs.remove(peerId)?.let { job ->
             job.cancel()
             Log.d(TAG, "Stopped ranging with $peerId")
