@@ -122,7 +122,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
         return connectionConfig
     }
 
-    actual fun getConnectionConfig(peerId:String):UwbSessionConfig? {
+    actual suspend fun getConnectionConfig(peerId:String):UwbSessionConfig? {
         return if(connectioConfigs[peerId] != null){
              connectionConfigs[peerId]
         } else {
@@ -141,7 +141,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                 // Use the remote peer's UWB address
                 val peerAddress = UwbAddress(remoteConfig.uwbAddress)
                 val peerDevice = UwbDevice(peerAddress)
-                Log.d(TAG, "ranging peer device address is ${remoteConfog.uwbAddress.toHexString()}")
+                Log.d(TAG, "ranging peer device address is ${remoteConfig.uwbAddress.toHexString()}")
 
                 val rangingParameters: RangingParameters = RangingParameters(
                     uwbConfigType = RangingParameters.CONFIG_UNICAST_DS_TWR,

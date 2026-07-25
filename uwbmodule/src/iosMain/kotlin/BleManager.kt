@@ -77,7 +77,7 @@ actual class BleManager(
         return service.characteristics?.firstOrNull { (it as? CBCharacteristic)?.UUID == target } as? CBCharacteristic
     }
 
-    private fun addGattService(entry: Profile) {
+    private fun addGattService(entry: UwbProfile) {
         // Read-only; server-side accessory tx-notify is out of scope (we only host phone-to-phone).
         val readChar = CBMutableCharacteristic(
             type = CBUUID.UUIDWithString(entry.readFromUuid!!),
@@ -360,7 +360,7 @@ actual class BleManager(
             }
             if (isReadChar) {
                 val peerId = didReceiveReadRequest.central.identifier.UUIDString                
-                var connectionLocalConfig=MultiplatformUwbManager.getConnectionConfig(peerId)
+                var connectionLocalConfig?=MultiplatformUwbManager.getConnectionConfig(peerId)
                 connectionLocalConfig = if(connectionLocalConfig==null){
                            MultiplatformUwbManager.createConnectionConfig(peerId,false)
                    } else {

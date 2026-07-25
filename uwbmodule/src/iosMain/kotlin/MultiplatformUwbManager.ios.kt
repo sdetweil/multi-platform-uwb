@@ -113,10 +113,10 @@ actual class MultiplatformUwbManager {
             uwbAddress = ByteArray(0), // Not used on iOS
             discoveryToken = tokenBytes,
         )
-        return connectioConfigs[peerId]
+        return connectionConfigs[peerId]
     }
 
-    actual fun getConnectionConfig(peerId:String): UwbSessionConfig? {
+    actual suspend fun getConnectionConfig(peerId:String): UwbSessionConfig? {
         return connectionConfigs[peerId]
     }
     
@@ -142,7 +142,7 @@ actual class MultiplatformUwbManager {
             }
             activeSessions[peerId]= remoteConfig
             NSLog("UwbManager: Starting accessory ranging with $peerId")
-            (sessionConfig.scope as NISession).runWithConfiguration(config)
+            (remoteConfig.scope as NISession).runWithConfiguration(config)
             return
         }
 
