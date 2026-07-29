@@ -18,7 +18,7 @@ class UwbSessionConfigTest {
             discoveryToken = null
         )
         val bytes = config.toByteArray()
-        val restored = UwbSessionConfig.fromByteArray(bytes)
+        val restored = UwbSessionConfig.fromByteArray(bytes,)
         assertNotNull(restored)
         assertEquals(config.sessionId, restored.sessionId)
         assertEquals(config.channel, restored.channel)
@@ -38,7 +38,7 @@ class UwbSessionConfigTest {
             discoveryToken = token
         )
         val bytes = config.toByteArray()
-        val restored = UwbSessionConfig.fromByteArray(bytes)
+        val restored = UwbSessionConfig.fromByteArray(bytes,)
         assertNotNull(restored)
         assertEquals(config.sessionId, restored.sessionId)
         assertEquals(config.channel, restored.channel)
@@ -58,7 +58,7 @@ class UwbSessionConfigTest {
             discoveryToken = byteArrayOf(0x01)
         )
         val bytes = config.toByteArray()
-        val restored = UwbSessionConfig.fromByteArray(bytes)
+        val restored = UwbSessionConfig.fromByteArray(bytes,)
         assertNotNull(restored)
         assertEquals(0, restored.uwbAddress.size)
     }
@@ -72,7 +72,7 @@ class UwbSessionConfigTest {
             uwbAddress = byteArrayOf(0xFF.toByte()),
         )
         val bytes = config.toByteArray()
-        val restored = UwbSessionConfig.fromByteArray(bytes)
+        val restored = UwbSessionConfig.fromByteArray(bytes,)
         assertNotNull(restored)
         assertEquals(Int.MAX_VALUE, restored.sessionId)
         assertEquals(Int.MAX_VALUE, restored.channel)
@@ -81,7 +81,7 @@ class UwbSessionConfigTest {
 
     @Test
     fun fromByteArrayReturnNullOnTooShort() {
-        assertNull(UwbSessionConfig.fromByteArray(ByteArray(5)))
+        assertNull(UwbSessionConfig.fromByteArray(ByteArray(5),))
     }
 
     @Test
@@ -89,7 +89,7 @@ class UwbSessionConfigTest {
         val config = UwbSessionConfig(42, 9, 10, byteArrayOf(1))
         val bytes = config.toByteArray()
         bytes[0] = 99 // corrupt version
-        assertNull(UwbSessionConfig.fromByteArray(bytes))
+        assertNull(UwbSessionConfig.fromByteArray(bytes,))
     }
 
     @Test
@@ -112,7 +112,7 @@ class UwbSessionConfigTest {
             sessionKey = key,
         )
         val bytes = config.toByteArray()
-        val restored = UwbSessionConfig.fromByteArray(bytes)
+        val restored = UwbSessionConfig.fromByteArray(bytes,)
         assertNotNull(restored)
         assertNotNull(restored.sessionKey)
         assertTrue(key.contentEquals(restored.sessionKey!!))
@@ -124,7 +124,7 @@ class UwbSessionConfigTest {
         val token = byteArrayOf(0xAA.toByte(), 0xBB.toByte())
         val key = ByteArray(8) { it.toByte() }
         val config = UwbSessionConfig(7, 9, 10, byteArrayOf(0x01), token, key)
-        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray(),)
         assertNotNull(restored)
         assertTrue(token.contentEquals(restored.discoveryToken!!))
         assertTrue(key.contentEquals(restored.sessionKey!!))
@@ -133,7 +133,7 @@ class UwbSessionConfigTest {
     @Test
     fun sessionKeyNullWhenAbsent() {
         val config = UwbSessionConfig(1, 2, 3, byteArrayOf(9), discoveryToken = byteArrayOf(1, 2))
-        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray(),)
         assertNotNull(restored)
         assertNull(restored.sessionKey)
     }
@@ -154,7 +154,7 @@ class UwbSessionConfigTest {
             addr.size.toByte(), (addr.size shr 8).toByte(), addr[0], addr[1],
             0, 0, // token size = 0
         )
-        val restored = UwbSessionConfig.fromByteArray(short)
+        val restored = UwbSessionConfig.fromByteArray(short,)
         assertNotNull(restored)
         assertEquals(sid, restored.sessionId)
         assertNull(restored.sessionKey)
@@ -187,7 +187,7 @@ class UwbSessionConfigTest {
         assertEquals(0x02.toByte(), b[13]); assertEquals(0.toByte(), b[14])
         assertEquals(0x02.toByte(), b[15]); assertEquals(0xC9.toByte(), b[16])
         // and it round-trips
-        assertEquals(config, UwbSessionConfig.fromByteArray(b))
+        assertEquals(config, UwbSessionConfig.fromByteArray(b,))
     }
 
     @Test
@@ -200,7 +200,7 @@ class UwbSessionConfigTest {
             uwbAddress = ByteArray(0),
             accessoryData = acc,
         )
-        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray(),)
         assertNotNull(restored)
         assertNotNull(restored.accessoryData)
         assertTrue(acc.contentEquals(restored.accessoryData!!))
@@ -212,7 +212,7 @@ class UwbSessionConfigTest {
     @Test
     fun accessoryDataNullWhenAbsent() {
         val config = UwbSessionConfig(1, 2, 3, byteArrayOf(9), sessionKey = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8))
-        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray(),)
         assertNotNull(restored)
         assertNull(restored.accessoryData)
         assertTrue(restored.sessionKey!!.size == 8)
@@ -227,7 +227,7 @@ class UwbSessionConfigTest {
             preambleIndex = 10,
             uwbAddress = byteArrayOf(0x0A, 0x0B),
         )
-        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray(),)
         assertNotNull(restored)
         assertEquals(0, restored.sessionId)
         assertEquals(config, restored)
@@ -245,7 +245,7 @@ class UwbSessionConfigTest {
             uwbAddress = ByteArray(0),
             discoveryToken = token,
         )
-        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray(),)
         assertNotNull(restored)
         assertEquals(0, restored.sessionId)
         assertTrue(token.contentEquals(restored.discoveryToken!!))
@@ -267,7 +267,7 @@ class UwbSessionConfigTest {
             sessionKey = key,
             accessoryData = acc,
         )
-        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray(),)
         assertNotNull(restored)
         assertEquals(config, restored)
         assertTrue(token.contentEquals(restored.discoveryToken!!))
@@ -280,7 +280,7 @@ class UwbSessionConfigTest {
         // High-bit-set values must survive the little-endian read/write symmetrically.
         for (sid in intArrayOf(-1, Int.MIN_VALUE, 0x80000000.toInt(), -123456)) {
             val config = UwbSessionConfig(sid, 9, 10, byteArrayOf(1, 2))
-            val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+            val restored = UwbSessionConfig.fromByteArray(config.toByteArray(),)
             assertNotNull(restored)
             assertEquals(sid, restored.sessionId)
         }
@@ -290,7 +290,7 @@ class UwbSessionConfigTest {
     fun emptyAccessoryDataParsesAsNull() {
         // A zero-length trailer is indistinguishable from absent, so it comes back null.
         val config = UwbSessionConfig(1, 2, 3, byteArrayOf(9), accessoryData = ByteArray(0))
-        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray(),)
         assertNotNull(restored)
         assertNull(restored.accessoryData)
     }
@@ -311,7 +311,7 @@ class UwbSessionConfigTest {
             0, 0, // token size = 0
             8, 0, // key size = 8, but no key bytes follow
         )
-        val restored = UwbSessionConfig.fromByteArray(truncated)
+        val restored = UwbSessionConfig.fromByteArray(truncated,)
         assertNotNull(restored)
         assertEquals(sid, restored.sessionId)
         assertNull(restored.sessionKey)

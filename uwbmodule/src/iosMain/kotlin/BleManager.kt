@@ -4,10 +4,12 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import platform.CoreBluetooth.*
 import platform.Foundation.*
 import platform.darwin.NSObject
+import platform.NearbyInteraction.NISession
 
 @OptIn(ExperimentalForeignApi::class)
 actual class BleManager(
     private val config: BleDiscoveryConfig = BleDiscoveryConfig(),
+    private val uwbManager: MultiplatformUwbManager = MultiplatformUwbManager()
 ) {
 
     private var centralManager: CBCentralManager? = null
@@ -48,17 +50,19 @@ actual class BleManager(
 
     /** Deliver a peer's serialized config to the app (single entry point, no duplicate dispatch). */
     private fun deliverRemoteConfig(peerId: String, bytes: ByteArray?) {
-        val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it) }
+        val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it, false) }
         if (remoteConfig != null) {
-            val connectionLocalConfig=MultiplatformUwbManager.getConnectionConfig(peerId)
-            val rangingRemoteConfig=if(remoteConfig.isOlder(connectionLocalConfig)){
-                 remoteConfig.copy(scope=connectionLocalConfig.scope)
+            val connectionLocalConfig=uwbManager.getConnectionConfig(peerId)
+            if(connectionLocalConfig != null){
+                val rangingRemoteConfig=if(remoteConfig.isOlder(connectionLocalConfig)){
+                     remoteConfig.copy(scope= connectionLocalConfig.scope)
+                }
+                else {
+                     connectionLocalConfig.copy(uwbAddress= remoteConfig.uwbAddress)
+                }
+                NSLog("received config from $peerId")
+                configExchangedCallback?.invoke(peerId, rangingRemoteConfig)
             }
-            else {
-                 connectionLocalConfig.copy(hwAddress=remoteConfig.hwAddress)
-            }
-            NSLog("received config from $peerId")
-            configExchangedCallback?.invoke(peerId, rangingRemoteConfig)
         } else {
             NSLog("BleManager: failed to parse config from $peerId")
         }
@@ -67,7 +71,7 @@ actual class BleManager(
     /** Deliver an accessory's raw configuration blob (opaque — wrapped, not parsed as our envelope). */
     private fun deliverAccessoryConfig(peerId: String, raw: ByteArray) {
         NSLog("BleManager: received accessory config from $peerId (${raw.size} bytes)")
-        configExchangedCallback?.invoke(peerId, UwbSessionConfig(0UL,0,0, 0, 0, ByteArray(0), accessoryData = raw))
+        configExchangedCallback?.invoke(peerId, UwbSessionConfig(0L, NISession(),0,0,0,ByteArray(0), accessoryData = raw))
     }
 
     /** Find a characteristic on a discovered service by UUID string (CBUUID normalizes short/long). */
@@ -143,7 +147,7 @@ actual class BleManager(
 
                 // Cache peripheral (must keep strong reference for connection)
                 discoveredPeripherals[deviceId] = AccessoryDevice(didDiscoverPeripheral, profile)
-
+                uwbManager.createConnectionConfig(deviceId, profile?.exchange == ExchangeProtocol.AccessoryNotify)
                 NSLog("BleManager: Discovered $deviceName ($deviceId) profile=${profile?.name}")
                 deviceDiscoveredCallback?.invoke(deviceId, deviceName)
             }
@@ -360,12 +364,12 @@ actual class BleManager(
             }
             if (isReadChar) {
                 val peerId = didReceiveReadRequest.central.identifier.UUIDString                
-                var connectionLocalConfig?=MultiplatformUwbManager.getConnectionConfig(peerId)
-                connectionLocalConfig = if(connectionLocalConfig==null){
-                           MultiplatformUwbManager.createConnectionConfig(peerId,false)
+                var connectionLocalConfig:UwbSessionConfig?=uwbManager.getConnectionConfig(peerId)
+                    /*connectionLocalConfig = if(connectionLocalConfig==null){
+                           uwbManager.createConnectionConfig(peerId,false)
                    } else {
                            connectionLocalConfig
-                   }
+                   }*/
                 val configBytes = connectionLocalConfig?.toByteArray() ?: ByteArray(0)
                 val offset = didReceiveReadRequest.offset.toInt()
                 if (offset < configBytes.size) {

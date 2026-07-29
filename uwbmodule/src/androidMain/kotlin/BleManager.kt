@@ -35,6 +35,7 @@ actual class BleManager(
 
     private val context: Context,
     private val config: BleDiscoveryConfig = BleDiscoveryConfig(),
+    private val uwbManager: MultiplatformUwbManager = MultiplatformUwbManager()
 ) {
     private val TAG = "BleManager"
 
@@ -71,25 +72,24 @@ actual class BleManager(
     )
     private val accessoryConnections = mutableMapOf<String, AccessoryConnection>()
 
-    //private val  multiplatformUwbManager = MultiplatformUwbManager();
-
     /** Profiles we host on the local GATT server — only phone-to-phone (read/write) ones. */
     private fun serverProfiles(): List<UwbProfile> =
         config.profiles.filter { it.exchange == ExchangeProtocol.ReadWrite && it.readFromUuid != null }
 
     /** Deliver a peer's serialized config to the app (single entry point, no duplicate dispatch). */
     private fun deliverRemoteConfig(peerId: String, bytes: ByteArray?) {
-        val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it) }
+        val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it,false) }
         if (remoteConfig != null) {
-            val connectionLocalConfig=MultiplatformUwbManager.getConnectionConfig(peerId)
-            val rangingRemoteConfig=if(remoteConfig.isOlder(connectionLocalConfig)){
-                 remoteConfig.copy(scope=connectionLocalConfig.scope)
+            val connectionLocalConfig=uwbManager.getConnectionConfig(peerId)
+            if(connectionLocalConfig != null) {
+                val rangingRemoteConfig = if (remoteConfig.isOlder(connectionLocalConfig)) {
+                    remoteConfig.copy(scope = connectionLocalConfig.scope)
+                } else {
+                    connectionLocalConfig.copy(uwbAddress = remoteConfig.uwbAddress)
+                }
+                Log.d(TAG, "received config from $peerId")
+                rangingRemoteConfig.let { configExchangedCallback?.invoke(peerId, it) }
             }
-            else {
-                 connectionLocalConfig.copy(hwAddress=remoteConfig.hwAddress)
-            }
-            Log.d(TAG, "received config from $peerId")
-            configExchangedCallback?.invoke(peerId, rangingRemoteConfig)
         } else {
             Log.e(TAG, "failed to parse config from $peerId")
         }
@@ -101,13 +101,15 @@ actual class BleManager(
         Log.d(TAG, "received accessory config from $peerId (${raw.size} bytes)")
         val remoteConfig = raw.let { UwbSessionConfig.fromByteArray(it, true) }
         if (remoteConfig != null) {
-            if (MultiplatformUwbManager.getConnectionConfig(peerId) == null) { // we need our own address to send to the accessory (controller)
+            if (uwbManager.getConnectionConfig(peerId) == null) { // we need our own address to send to the accessory (controller)
                 Log.e(TAG, "local config not created")
                 return
             }
             // accessory has decided on anything except its hwAddress, so use the local scope.... to run the session
             // this is cause the local uwbSessionConfig to be sent to the accessory which has all the same data except OUR hwAddress
-            val rangingRemoteConfig= MultiplatformUwbManager.getConnectionConfig(peerId).copy(remoteConfig?.hwAddress)
+            val rangingRemoteConfig= uwbManager.getConnectionConfig(peerId)!!.copy(
+                uwbAddress=remoteConfig.uwbAddress, isAccessoryDevice = true
+            )
             configExchangedCallback?.invoke(peerId, rangingRemoteConfig) // this starts ranging
         } else {
             Log.e(TAG, "failed to parse config from $peerId")
@@ -140,6 +142,7 @@ actual class BleManager(
                 }
             }
             discoveredDevices[deviceAddress] = AccessoryDevice(device, profile)
+            uwbManager.createConnectionConfig(deviceAddress, profile?.exchange == ExchangeProtocol.AccessoryNotify)
             Log.d(TAG, "Found device: $deviceName ($deviceAddress) profile=${profile?.name}")
             deviceDiscoveredCallback?.invoke(deviceAddress, deviceName)
         }
@@ -199,12 +202,9 @@ actual class BleManager(
                 it.readFromUuid.equals(characteristic.uuid.toString(), ignoreCase = true)
             }
             if (isReadChar) {
-                var connectionConfig=MultiplatformUwbManager.getConnectionConfig(device.address)
-                connectionLocalConfig = if(connectionLocalConfig==null){
-                           MultiplatformUwbManager.createConnectionConfig(device.address,false)
-                   } else {
-                           connectionLocalConfig
-                   }
+                var connectionLocalConfig: UwbSessionConfig?=uwbManager.getConnectionConfig(device.address)
+                connectionLocalConfig =
+                    connectionLocalConfig ?: uwbManager.createConnectionConfig(device.address,false)
                 val configBytes = connectionLocalConfig?.toByteArray() ?: ByteArray(0)
                 val responseBytes = if (offset < configBytes.size) {
                     configBytes.copyOfRange(offset, configBytes.size)
@@ -566,7 +566,7 @@ actual class BleManager(
                     val readUuid = profile?.readFromUuid?.let { UUID.fromString(it.uppercase()) }
                     if (characteristic.uuid == readUuid) {
                         deliverRemoteConfig(peerId, characteristic.value)
-
+                        Log.d(TAG, "sending config to remote")
                         // Step 2: write our config back to the peer.
                         val service = gatt.getService(UUID.fromString(profile!!.discoveryServiceUuid.uppercase()))
                         val writeChar = service?.getCharacteristic(UUID.fromString(profile.writeToUuid.uppercase()))

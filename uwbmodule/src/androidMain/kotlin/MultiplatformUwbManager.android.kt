@@ -40,33 +40,33 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
     private val activeJobs = mutableMapOf<String, Job>()
 
     private val activeSessions = mutableMapOf<String, UwbSessionConfig>()     // config used for rangingwith this peer
-    
-    private val connectionConfigs = mutableMapOf<String, UwbSessionConfig>()  // config created for connection aka local
 
-    /**
-     * Our 8-byte static-STS session key, generated once and reused for the lifetime
-     * of this manager so the value advertised over BLE matches the one used at ranging.
-     */
-    //private var localSessionKey: ByteArray? = null
+
 
     /** Default channel and preamble — used when generating local config. */
-    private companion object {
+    companion object {
         const val DEFAULT_CHANNEL = 9
         const val DEFAULT_PREAMBLE_INDEX = 11
         const val SESSION_KEY_SIZE = 8
+        private val connectionConfigs =
+            mutableMapOf<String, UwbSessionConfig>()  // config created for connection aka local
+        var controllerScope: UwbControllerSessionScope? = null
+        var controleeScope : UwbControleeSessionScope? = null
     }
-
+    suspend fun init(){
+        initialize()
+    }
     actual suspend fun initialize() {
         if (androidUwbManager == null) {
             errorCallback?.invoke("UWB not supported on this device")
             return
         }
         try {
-
-            //val scope = androidUwbManager.controllerSessionScope()// androidUwbManager.controleeSessionScope()
+            Log.d(TAG,"uwbmanager init")
+            controleeScope = androidUwbManager.controleeSessionScope()// androidUwbManager.controleeSessionScope()
             //sessionScope = scope
             // need this for ranging wit accessory, can't create later
-            //controllerScope = androidUwbManager.controllerSessionScope()
+            controllerScope = androidUwbManager.controllerSessionScope()
 
             val capabilities = androidUwbManager.controllerSessionScope().rangingCapabilities
             if (!capabilities.isDistanceSupported) {
@@ -78,13 +78,14 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
         }
     }
 
-    actual suspend fun createConnectionConfig(peerId: String, isAccessory: Boolean ): UwbSessionConfig? {
+    actual fun createConnectionConfig(peerId: String, isAccessory: Boolean ): UwbSessionConfig? {
         val localScope = if(isAccessory){
-            androidUwbManager?.controllerSessionScope()
+            controllerScope
         } else {
-            androidUwbManager?.controleeSessionScope()
+            controleeScope
         }
-
+        Log.d(TAG, "localScope = $localScope")
+        // get the local device uwb HW address
         val localAddress = localScope?.localAddress?.address
 
         // Generate a session ID from our address for deterministic agreement.
@@ -100,30 +101,29 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
 
         Log.d(TAG, "phone address is ${localAddress?.toHexString()}")
 
-        val connectionConfig? = if(sessionId !=0 ) {
-            localScope?.let {
-                sessionId?.let { it1 ->
-                    UwbSessionConfig(
-                        timestamp = TimeUtils.getMilliseconds(),
-                        scope = it,
-                        sessionId = it1,
-                        channel = DEFAULT_CHANNEL,
-                        preambleIndex = DEFAULT_PREAMBLE_INDEX,
-                        uwbAddress = localAddress,
-                        discoveryToken = null,
-                        sessionKey = key,
-                    )
-                }
-            }
+        val connectionConfig: UwbSessionConfig? = if(sessionId !=0 ) {
+            sessionId?.let { it1 ->
+                UwbSessionConfig(
+                    timestamp = System.currentTimeMillis(),
+                    scope = localScope,
+                    sessionId = it1,
+                    channel = DEFAULT_CHANNEL,
+                    preambleIndex = DEFAULT_PREAMBLE_INDEX,
+                    uwbAddress = localAddress,
+                    discoveryToken = null,
+                    sessionKey = key,
+                )
+            } as UwbSessionConfig
+
         } else {
             null
         }
-        connectionConfigs[peerId]= connectionConfig
+        connectionConfigs[peerId]= connectionConfig as UwbSessionConfig
         return connectionConfig
     }
 
-    actual suspend fun getConnectionConfig(peerId:String):UwbSessionConfig? {
-        return if(connectioConfigs[peerId] != null){
+    actual fun getConnectionConfig(peerId:String):UwbSessionConfig? {
+        return if(connectionConfigs[peerId] != null){
              connectionConfigs[peerId]
         } else {
              null
@@ -163,12 +163,10 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                 )
                 // if this is an accessory, send the config it should use now, as we have done all the pre-checking
                 if(remoteConfig.isAccessoryDevice) {
-                    val message = byteArrayOf(ANDROID_ACCESSORY_CONFIGURE_AND_START)+ activeSessions[peerId]?.toByteArray()
-                    Log.d(TAG, "sending config data message to accessory=${message.toHexString()}")
-                    activeSessions[peerId]?.toByteArray().let { sendToPeerCallback?.invoke(peerId, message) }
+                    val message = getConnectionConfig(peerId)?.let { byteArrayOf(ANDROID_ACCESSORY_CONFIGURE_AND_START)+ it.toByteArray() }
+                    Log.d(TAG, "sending config data message to accessory=${message?.toHexString()}")
+                    message?.let { sendToPeerCallback?.invoke(peerId, it) }
                 }
-
-
 
                 rangingParameters.let { ((activeSessions[peerId] as UwbSessionConfig).scope as UwbClientSessionScope).prepareSession(it) }
                     ?.catch { exception ->
@@ -217,8 +215,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
         }
 
     actual suspend fun stopRanging(peerId: String) {
-        (activeSessions[peerId]?.scope as UwbSessionConfig).pause()
-        activeSessions.remove(peerId)
+        //(activeSessions[peerId]?.scope as UwbControleeSessionScope).pause()
         activeJobs.remove(peerId)?.let { job ->
             job.cancel()
             Log.d(TAG, "Stopped ranging with $peerId")

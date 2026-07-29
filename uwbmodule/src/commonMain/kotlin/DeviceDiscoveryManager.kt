@@ -107,6 +107,10 @@ class DeviceDiscoveryManager(
         }
     }
 
+    fun getConnectionConfig(peerId:String): UwbSessionConfig?{
+        return multiplatformUwbManager.getConnectionConfig((peerId))
+    }
+
     /** Get the local UWB config (address, session ID, channel) for display. */
     //suspend fun getLocalConfig(): UwbSessionConfig? = multiplatformUwbManager.getLocalConfig(false)
 
@@ -221,6 +225,8 @@ class DeviceDiscoveryManager(
                 emitEvent(EventType.ConfigExchangeStarted, id, "Starting GATT config exchange")
                 updateDeviceStateLocked(id, DeviceState.ExchangingConfig)
                 bleManager.connectAndExchangeConfig(id, connectionConfig)
+            } else {
+                emitEvent(EventType.DeviceDiscovered, id, "no config entry found")
             }
         }
     }

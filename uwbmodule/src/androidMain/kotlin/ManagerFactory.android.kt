@@ -10,6 +10,6 @@ actual class ManagerFactory(private val context: Context) {
     }
 
     actual fun createBleManager(config: BleDiscoveryConfig): BleManager {
-        return BleManager(context, config)
+        return BleManager(context, config, MultiplatformUwbManager())
     }
 }

@@ -8,9 +8,9 @@ package com.dustedrob.uwb
  */
 data class UwbSessionConfig(
     // timestamp of creation
-    val timestamp: ULong, 
-    val scope: Any,  // what scope or NiSession to use to native range on this connection
-    /** Agreed-upon session identifier. Both peers must use the same value. */
+    val timestamp: Long,
+    val scope: Any?,  // what scope or NiSession to use to native range on this connection
+    /** Agreed-upon session identifier. Both peers must use the timsame value. */
     val sessionId: Int,
     /** UWB channel number (e.g., 9). */
     val channel: Int,
@@ -139,12 +139,8 @@ data class UwbSessionConfig(
                 thisAcc.contentEquals(otherAcc)
     }
    
-    fun isOlder(other:UwbSessionConfig): Boolean {
-        if(timestamp<=other.timestamp) {
-           return true
-        }
-        else
-           return false
+    fun isOlder(other: UwbSessionConfig): Boolean {
+        return timestamp<=other.timestamp
         }
 
     override fun hashCode(): Int {
@@ -161,17 +157,21 @@ data class UwbSessionConfig(
     companion object {
         private const val PROTOCOL_VERSION: Byte = 1
 
-        fun fromByteArray(bytes: ByteArray, accessoryDevice: Boolean= false, accessoryData:ByteArray? = null): UwbSessionConfig? {
+        fun fromByteArray(
+            bytes: ByteArray,
+            accessoryDevice: Boolean
+        ): UwbSessionConfig? {
             if (bytes.size < 25) return null // minimum: 1(ver) + 8(ts) + 4(sid) + 4(ch) + 4(pre) + 2(addrLen) + 2(tokLen)
             var pos = 0
 
             val version = bytes[pos++]
             if (version != PROTOCOL_VERSION) return null
 
-	    val timestamp = readULong(bytes,pos); pos+=8
+	        val timestamp = readLong(bytes,pos); pos+=8
             val sessionId = readInt(bytes, pos); pos += 4
             val channel = readInt(bytes, pos); pos += 4
             val preambleIndex = readInt(bytes, pos); pos += 4
+            val scope = 0
 
             if (pos + 2 > bytes.size) return null
             val addrLen = readShort(bytes, pos); pos += 2
@@ -200,10 +200,10 @@ data class UwbSessionConfig(
                 null
             }
 
-            val localScope: Any = 0
+            val localScope: Any = scope
             return UwbSessionConfig(
                 timestamp = timestamp,
-                scope= localScope,
+                scope = localScope,
                 sessionId = sessionId,
                 channel = channel,
                 preambleIndex = preambleIndex,
@@ -222,16 +222,16 @@ data class UwbSessionConfig(
             ((bytes[offset + 2].toInt() and 0xFF) shl 16) or
             ((bytes[offset + 3].toInt() and 0xFF) shl 24)
 
-        private fun readULong(bytes:ByteArray, offset:Int): ULong =
+        private fun readLong(bytes:ByteArray, offset:Int): Long =
            //add function like readInt above, 4 more bytes
-            ((bytes[offset].toULong() and 0xFFuL) or
-            ((bytes[offset + 1].toULong() and 0xFFuL) shl 8) or
-            ((bytes[offset + 2].toULong() and 0xFFuL) shl 16) or
-            ((bytes[offset + 3].toULong() and 0xFFuL) shl 24) or
-            ((bytes[offset + 4].toULong() and 0xFFuL) shl 32) or
-            ((bytes[offset + 5].toULong() and 0xFFuL) shl 40) or
-            ((bytes[offset + 6].toULong() and 0xFFuL) shl 48) or
-            ((bytes[offset + 7].toULong() and 0xFFuL) shl 56)) 
+            ((bytes[offset].toLong() and 0xFFL) or
+            ((bytes[offset + 1].toLong() and 0xFFL) shl 8) or
+            ((bytes[offset + 2].toLong() and 0xFFL) shl 16) or
+            ((bytes[offset + 3].toLong() and 0xFFL) shl 24) or
+            ((bytes[offset + 4].toLong() and 0xFFL) shl 32) or
+            ((bytes[offset + 5].toLong() and 0xFFL) shl 40) or
+            ((bytes[offset + 6].toLong() and 0xFFL) shl 48) or
+            ((bytes[offset + 7].toLong() and 0xFFL) shl 56))
 
         private fun readShort(bytes: ByteArray, offset: Int): Int =
             (bytes[offset].toInt() and 0xFF) or

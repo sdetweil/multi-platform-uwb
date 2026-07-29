@@ -20,9 +20,9 @@ expect class MultiplatformUwbManager {
      * On Android: contains local UWB address, proposed session ID, channel, preamble.
      * On iOS: contains serialized NI discovery token.
      */
-    suspend fun createConnectionConfig(peerId:String, isAccessory:Boolean): UwbSessionConfig?
 
-    suspend fun getConnectionConfig(peerId: String): UwbSessionConfig?
+    fun createConnectionConfig(peerId:String, isAccessory:Boolean): UwbSessionConfig?
+    fun getConnectionConfig(peerId: String): UwbSessionConfig?
     /**
      * Start ranging with a peer using exchanged configurations.
      *
@@ -52,4 +52,5 @@ expect class MultiplatformUwbManager {
 
     /** Clean up resources and unbind services. Call when done using the manager. */
     suspend fun cleanup()
+
 }
