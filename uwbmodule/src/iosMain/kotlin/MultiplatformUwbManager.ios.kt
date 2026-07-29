@@ -236,8 +236,12 @@ actual class MultiplatformUwbManager {
 
         override fun session(session: NISession, didUpdateNearbyObjects: List<*>) {
             dispatchToMain {
+                // Accessory objects aren't in activePeers (keyed by peer tokens), so fall
+                // back to the tracked accessory peer.
+                val peerId:String = activeSessions.entries
+                    .firstOrNull { it.value.scope  == session }?.key ?: "unknown"
                 didUpdateNearbyObjects.forEach { obj ->
-                    NSLog("didUpdate entered")
+                    NSLog("didUpdate entered for $peerId")
                     if (obj is NINearbyObject) {
                         val distance = obj.distance.toDouble()
                         if (!distance.isNaN()) {
@@ -262,7 +266,7 @@ actual class MultiplatformUwbManager {
                             // NearbyInteraction exposes no elevation angle — `verticalDirectionEstimate`
                             // is a direction category (above/below/same), not a measurement — so we
                             // leave elevation null on iOS rather than emit a meaningless value.
-                            NSLog("sending callback info")
+                            NSLog("sending callback info to $peerId")
                             rangingCallback?.invoke(peerId, distance, azimuth, null)
                         }
                     }
@@ -364,13 +368,16 @@ actual class MultiplatformUwbManager {
             val peerId:String = activeSessions.entries
                 .firstOrNull { it.value.scope  == session }?.key ?: "unknown"
             NSLog("UwbManager: Session suspended for ${peerId}")
+            sendToPeerCallback?.invoke(peerId, byteArrayOf(NI_ACCESSORY_STOP))
             dispatchToMain {
-                errorCallback?.invoke("NI Session was suspended")
+                errorCallback?.invoke("NI Session was suspended for $peerId")
             }
         }
 
         override fun sessionSuspensionEnded(session: NISession) {
-            NSLog("UwbManager: Session suspension ended")
+            val peerId:String = activeSessions.entries
+                .firstOrNull { it.value.scope  == session }?.key ?: "unknown"
+            NSLog("UwbManager: Session suspension ended for $peerId")
             // Re-run with existing config if we have active peers
             // The session needs to be re-configured after suspension
         }
