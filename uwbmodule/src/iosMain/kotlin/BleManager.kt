@@ -4,7 +4,6 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import platform.CoreBluetooth.*
 import platform.Foundation.*
 import platform.darwin.NSObject
-import platform.NearbyInteraction.NISession
 
 @OptIn(ExperimentalForeignApi::class)
 actual class BleManager(
@@ -55,7 +54,7 @@ actual class BleManager(
             val connectionLocalConfig=uwbManager.getConnectionConfig(peerId)
             if(connectionLocalConfig != null){
                 val rangingRemoteConfig=if(remoteConfig.isOlder(connectionLocalConfig)){
-                     remoteConfig.copy(scope= connectionLocalConfig.scope)
+                     remoteConfig
                 }
                 else {
                      connectionLocalConfig.copy(uwbAddress= remoteConfig.uwbAddress)
@@ -71,7 +70,7 @@ actual class BleManager(
     /** Deliver an accessory's raw configuration blob (opaque — wrapped, not parsed as our envelope). */
     private fun deliverAccessoryConfig(peerId: String, raw: ByteArray) {
         NSLog("BleManager: received accessory config from $peerId (${raw.size} bytes)")
-        configExchangedCallback?.invoke(peerId, UwbSessionConfig(0L, NISession(),0,0,0,ByteArray(0), accessoryData = raw))
+        configExchangedCallback?.invoke(peerId, UwbSessionConfig(0, 0, 0, ByteArray(0), accessoryData = raw))
     }
 
     /** Find a characteristic on a discovered service by UUID string (CBUUID normalizes short/long). */

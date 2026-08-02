@@ -83,7 +83,7 @@ actual class BleManager(
             val connectionLocalConfig=uwbManager.getConnectionConfig(peerId)
             if(connectionLocalConfig != null) {
                 val rangingRemoteConfig = if (remoteConfig.isOlder(connectionLocalConfig)) {
-                    remoteConfig.copy(scope = connectionLocalConfig.scope)
+                    remoteConfig
                 } else {
                     connectionLocalConfig.copy(uwbAddress = remoteConfig.uwbAddress)
                 }
