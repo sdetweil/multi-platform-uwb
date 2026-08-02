@@ -59,7 +59,6 @@ data class UwbSessionConfig(
         val tokenBytes = discoveryToken ?: ByteArray(0)
         val keyBytes = sessionKey ?: ByteArray(0)
         val accBytes = accessoryData ?: ByteArray(0)
-        val timestamp = 0
         val size = 1 +8 + 4 + 4 + 4 + 2 + uwbAddress.size + 2 + tokenBytes.size + 2 + keyBytes.size + 2 + accBytes.size
         val buf = ByteArray(size)
         var pos = 0
@@ -67,7 +66,8 @@ data class UwbSessionConfig(
         // Version
         buf[pos++] = PROTOCOL_VERSION
 
-        // timestamp
+        // timestamp (LE, 64-bit) — serialize the actual property so both peers can
+        // compare ages; a local `val timestamp = 0` used to shadow it and always sent 0.
         buf[pos++]=timestamp.toByte()
         buf[pos++]=(timestamp shr 8).toByte()
         buf[pos++]=(timestamp shr 16).toByte()
