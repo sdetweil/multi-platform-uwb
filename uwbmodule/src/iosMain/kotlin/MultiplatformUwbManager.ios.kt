@@ -148,8 +148,10 @@ actual class MultiplatformUwbManager {
             activeSessions[peerId]= remoteConfig
             NSLog("UwbManager: Starting accessory ranging with $peerId ")
             val session = (remoteConfig.scope as NISession)
-            sessionDelegate = SessionDelegate()
-            session.delegate = sessionDelegate
+            // NISession.delegate is weak, so hold each session's delegate strongly per session
+            // (in activeDelegates) instead of in one shared field that the next session overwrites.
+            val delegate = activeDelegates[session] ?: SessionDelegate().also { activeDelegates[session] = it }
+            session.delegate = delegate
             session.runWithConfiguration(config)
             return
         }
@@ -195,8 +197,10 @@ actual class MultiplatformUwbManager {
         }
         NSLog("UwbManager: Starting ranging with $peerId")
         val session = (remoteConfig.scope as NISession)
-        sessionDelegate = SessionDelegate()
-        session.delegate = sessionDelegate
+        // NISession.delegate is weak, so hold each session's delegate strongly per session
+        // (in activeDelegates) instead of in one shared field that the next session overwrites.
+        val delegate = activeDelegates[session] ?: SessionDelegate().also { activeDelegates[session] = it }
+        session.delegate = delegate
         session.runWithConfiguration(config)
     }
 
