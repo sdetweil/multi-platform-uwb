@@ -105,19 +105,16 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
         // Track the live scope per peer, separate from the serializable config.
         localScope?.let { peerScopes[peerId] = it }
 
-        val connectionConfig: UwbSessionConfig? = if(sessionId !=0 ) {
-            sessionId?.let { it1 ->
-                UwbSessionConfig(
-                    timestamp = System.currentTimeMillis(),
-                    sessionId = it1,
-                    channel = DEFAULT_CHANNEL,
-                    preambleIndex = DEFAULT_PREAMBLE_INDEX,
-                    uwbAddress = localAddress,
-                    discoveryToken = null,
-                    sessionKey = key,
-                )
-            } as UwbSessionConfig
-
+        val connectionConfig: UwbSessionConfig? = if(sessionId !=null ) {
+            UwbSessionConfig(
+                timestamp = System.currentTimeMillis(),
+                sessionId = sessionId,
+                channel = DEFAULT_CHANNEL,
+                preambleIndex = DEFAULT_PREAMBLE_INDEX,
+                uwbAddress = localAddress,
+                discoveryToken = null,
+                sessionKey = key,
+            )
         } else {
             null
         }
@@ -202,7 +199,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                             }
 
                             is RangingResult.RangingResultPeerDisconnected -> {
-                                Log.d(TAG,"peer disconnected")
+                                Log.d(TAG,"peer disconnected ${peerId}")
                                 errorCallback?.invoke("Peer $peerId disconnected")
                                 activeJobs.remove(peerId)
                             }
