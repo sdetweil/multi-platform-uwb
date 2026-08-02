@@ -148,6 +148,7 @@ class UwbSessionConfigTest {
         val addr = byteArrayOf(0x01, 0x02)
         val short = byteArrayOf(
             1, // version
+            0, 0, 0, 0, 0, 0, 0, 0, // timestamp (LE, 64-bit)
             sid.toByte(), (sid shr 8).toByte(), (sid shr 16).toByte(), (sid shr 24).toByte(),
             ch.toByte(), (ch shr 8).toByte(), (ch shr 16).toByte(), (ch shr 24).toByte(),
             pre.toByte(), (pre shr 8).toByte(), (pre shr 16).toByte(), (pre shr 24).toByte(),
@@ -174,18 +175,20 @@ class UwbSessionConfigTest {
         )
         val b = config.toByteArray()
         assertEquals(1.toByte(), b[0]) // version
+        // timestamp defaults to 0 -> 8 LE bytes of 0x00
+        for (i in 1..8) assertEquals(0.toByte(), b[i])
         // sessionId 0x691A4B22 -> 22 4B 1A 69
-        assertEquals(0x22.toByte(), b[1]); assertEquals(0x4B.toByte(), b[2])
-        assertEquals(0x1A.toByte(), b[3]); assertEquals(0x69.toByte(), b[4])
+        assertEquals(0x22.toByte(), b[9]); assertEquals(0x4B.toByte(), b[10])
+        assertEquals(0x1A.toByte(), b[11]); assertEquals(0x69.toByte(), b[12])
         // channel 9 -> 09 00 00 00
-        assertEquals(0x09.toByte(), b[5]); assertEquals(0.toByte(), b[6])
-        assertEquals(0.toByte(), b[7]); assertEquals(0.toByte(), b[8])
+        assertEquals(0x09.toByte(), b[13]); assertEquals(0.toByte(), b[14])
+        assertEquals(0.toByte(), b[15]); assertEquals(0.toByte(), b[16])
         // preambleIndex 10 -> 0A 00 00 00
-        assertEquals(0x0A.toByte(), b[9]); assertEquals(0.toByte(), b[10])
-        assertEquals(0.toByte(), b[11]); assertEquals(0.toByte(), b[12])
+        assertEquals(0x0A.toByte(), b[17]); assertEquals(0.toByte(), b[18])
+        assertEquals(0.toByte(), b[19]); assertEquals(0.toByte(), b[20])
         // address size 2 -> 02 00, then the 2 address bytes verbatim
-        assertEquals(0x02.toByte(), b[13]); assertEquals(0.toByte(), b[14])
-        assertEquals(0x02.toByte(), b[15]); assertEquals(0xC9.toByte(), b[16])
+        assertEquals(0x02.toByte(), b[21]); assertEquals(0.toByte(), b[22])
+        assertEquals(0x02.toByte(), b[23]); assertEquals(0xC9.toByte(), b[24])
         // and it round-trips
         assertEquals(config, UwbSessionConfig.fromByteArray(b,))
     }
@@ -276,6 +279,21 @@ class UwbSessionConfigTest {
     }
 
     @Test
+    fun timestampRoundTrips() {
+        // The 64-bit creation timestamp must survive serialization so peers can pick a winner.
+        val config = UwbSessionConfig(
+            sessionId = 7,
+            channel = 9,
+            preambleIndex = 10,
+            uwbAddress = byteArrayOf(0x01, 0x02),
+            timestamp = 0x0123_4567_89AB_CDEFL,
+        )
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        assertNotNull(restored)
+        assertEquals(0x0123_4567_89AB_CDEFL, restored.timestamp)
+    }
+
+    @Test
     fun negativeSessionIdRoundTripsLittleEndian() {
         // High-bit-set values must survive the little-endian read/write symmetrically.
         for (sid in intArrayOf(-1, Int.MIN_VALUE, 0x80000000.toInt(), -123456)) {
@@ -304,6 +322,7 @@ class UwbSessionConfigTest {
         val pre = 10
         val truncated = byteArrayOf(
             1, // version
+            0, 0, 0, 0, 0, 0, 0, 0, // timestamp (LE, 64-bit)
             sid.toByte(), (sid shr 8).toByte(), (sid shr 16).toByte(), (sid shr 24).toByte(),
             ch.toByte(), (ch shr 8).toByte(), (ch shr 16).toByte(), (ch shr 24).toByte(),
             pre.toByte(), (pre shr 8).toByte(), (pre shr 16).toByte(), (pre shr 24).toByte(),
