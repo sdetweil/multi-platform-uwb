@@ -7,10 +7,7 @@ package com.dustedrob.uwb
  * On iOS: contains the NearbyInteraction discovery token (serialized).
  */
 data class UwbSessionConfig(
-    // timestamp of creation
-    val timestamp: Long,
-    val scope: Any?,  // what scope or NiSession to use to native range on this connection
-    /** Agreed-upon session identifier. Both peers must use the timsame value. */
+    /** Agreed-upon session identifier. Both peers must use the same value. */
     val sessionId: Int,
     /** UWB channel number (e.g., 9). */
     val channel: Int,
@@ -37,6 +34,13 @@ data class UwbSessionConfig(
     val accessoryData: ByteArray? = null,
     // indicates if this was created by accessory device info (android)
     val isAccessoryDevice: Boolean = false,
+    /**
+     * Creation time (epoch millis), exchanged so both peers can deterministically pick a winner:
+     * the older config owns the session parameters. The live platform ranging handle
+     * (Android session scope / iOS NISession) is kept out of this wire model and tracked per peer
+     * in the manager instead.
+     */
+    val timestamp: Long = 0L,
 ) {
     /**
      * Serialize to a simple binary format for BLE GATT exchange.
@@ -59,7 +63,6 @@ data class UwbSessionConfig(
         val tokenBytes = discoveryToken ?: ByteArray(0)
         val keyBytes = sessionKey ?: ByteArray(0)
         val accBytes = accessoryData ?: ByteArray(0)
-        val timestamp = 0
         val size = 1 +8 + 4 + 4 + 4 + 2 + uwbAddress.size + 2 + tokenBytes.size + 2 + keyBytes.size + 2 + accBytes.size
         val buf = ByteArray(size)
         var pos = 0
@@ -67,7 +70,8 @@ data class UwbSessionConfig(
         // Version
         buf[pos++] = PROTOCOL_VERSION
 
-        // timestamp
+        // timestamp (LE, 64-bit) — serialize the actual property so both peers can
+        // compare ages; a local `val timestamp = 0` used to shadow it and always sent 0.
         buf[pos++]=timestamp.toByte()
         buf[pos++]=(timestamp shr 8).toByte()
         buf[pos++]=(timestamp shr 16).toByte()
@@ -159,7 +163,7 @@ data class UwbSessionConfig(
 
         fun fromByteArray(
             bytes: ByteArray,
-            accessoryDevice: Boolean
+            accessoryDevice: Boolean = false
         ): UwbSessionConfig? {
             if (bytes.size < 25) return null // minimum: 1(ver) + 8(ts) + 4(sid) + 4(ch) + 4(pre) + 2(addrLen) + 2(tokLen)
             var pos = 0
@@ -171,7 +175,6 @@ data class UwbSessionConfig(
             val sessionId = readInt(bytes, pos); pos += 4
             val channel = readInt(bytes, pos); pos += 4
             val preambleIndex = readInt(bytes, pos); pos += 4
-            val scope = 0
 
             if (pos + 2 > bytes.size) return null
             val addrLen = readShort(bytes, pos); pos += 2
@@ -200,10 +203,8 @@ data class UwbSessionConfig(
                 null
             }
 
-            val localScope: Any = scope
             return UwbSessionConfig(
                 timestamp = timestamp,
-                scope = localScope,
                 sessionId = sessionId,
                 channel = channel,
                 preambleIndex = preambleIndex,

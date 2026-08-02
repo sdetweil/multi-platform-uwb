@@ -39,19 +39,20 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
     /** Active ranging coroutine jobs, keyed by peer ID. Cancel to stop ranging. */
     private val activeJobs = mutableMapOf<String, Job>()
 
-    private val activeSessions = mutableMapOf<String, UwbSessionConfig>()     // config used for rangingwith this peer
+    /** Local config we created per peer (our address, session id, key). */
+    private val connectionConfigs = mutableMapOf<String, UwbSessionConfig>()
 
+    /** Live platform ranging scope per peer, kept out of the serializable [UwbSessionConfig]. */
+    private val peerScopes = mutableMapOf<String, UwbClientSessionScope>()
 
+    private var controllerScope: UwbControllerSessionScope? = null
+    private var controleeScope: UwbControleeSessionScope? = null
 
     /** Default channel and preamble — used when generating local config. */
     companion object {
         const val DEFAULT_CHANNEL = 9
         const val DEFAULT_PREAMBLE_INDEX = 11
         const val SESSION_KEY_SIZE = 8
-        private val connectionConfigs =
-            mutableMapOf<String, UwbSessionConfig>()  // config created for connection aka local
-        var controllerScope: UwbControllerSessionScope? = null
-        var controleeScope : UwbControleeSessionScope? = null
     }
     suspend fun init(){
         initialize()
@@ -101,11 +102,13 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
 
         Log.d(TAG, "phone address is ${localAddress?.toHexString()}")
 
+        // Track the live scope per peer, separate from the serializable config.
+        localScope?.let { peerScopes[peerId] = it }
+
         val connectionConfig: UwbSessionConfig? = if(sessionId !=0 ) {
             sessionId?.let { it1 ->
                 UwbSessionConfig(
                     timestamp = System.currentTimeMillis(),
-                    scope = localScope,
                     sessionId = it1,
                     channel = DEFAULT_CHANNEL,
                     preambleIndex = DEFAULT_PREAMBLE_INDEX,
@@ -168,11 +171,17 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                     message?.let { sendToPeerCallback?.invoke(peerId, it) }
                 }
 
-                rangingParameters.let { ((activeSessions[peerId] as UwbSessionConfig).scope as UwbClientSessionScope).prepareSession(it) }
-                    ?.catch { exception ->
+                val scope = peerScopes[peerId]
+                if (scope == null) {
+                    errorCallback?.invoke("No UWB session scope for $peerId; createConnectionConfig must run first")
+                    activeJobs.remove(peerId)
+                    return@launch
+                }
+                scope.prepareSession(rangingParameters)
+                    .catch { exception ->
                         errorCallback?.invoke("Ranging failed for $peerId: ${exception.message}")
                     }
-                    ?.collect { result ->
+                    .collect { result ->
                         Log.d(TAG, "in collect")
                         when (result) {
                             is RangingResult.RangingResultPosition -> {
@@ -211,11 +220,9 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
             }
             Log.d(TAG,"Ranging process starting for peer ${peerId}")
             activeJobs[peerId] = job
-            activeSessions[peerId] = remoteConfig
         }
 
     actual suspend fun stopRanging(peerId: String) {
-        //(activeSessions[peerId]?.scope as UwbControleeSessionScope).pause()
         activeJobs.remove(peerId)?.let { job ->
             job.cancel()
             Log.d(TAG, "Stopped ranging with $peerId")
@@ -238,9 +245,9 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
     actual suspend fun cleanup() {
         activeJobs.values.forEach { it.cancel() }
         activeJobs.clear()
-        activeSessions.clear()
+        peerScopes.clear()
         connectionConfigs.clear()
         coroutineScope.cancel()
-        }
     }
+}
 

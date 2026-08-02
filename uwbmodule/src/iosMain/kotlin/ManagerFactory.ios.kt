@@ -1,11 +1,12 @@
 package com.dustedrob.uwb
 
 actual class ManagerFactory {
-    actual fun createUwbManager(): MultiplatformUwbManager {
-        return MultiplatformUwbManager()
-    }
+    // One shared UWB manager so BleManager and DeviceDiscoveryManager see the same per-peer
+    // sessions and connection configs.
+    private val uwbManager = MultiplatformUwbManager()
 
-    actual fun createBleManager(config: BleDiscoveryConfig): BleManager {
-        return BleManager(config)
-    }
+    actual fun createUwbManager(): MultiplatformUwbManager = uwbManager
+
+    actual fun createBleManager(config: BleDiscoveryConfig): BleManager =
+        BleManager(config, uwbManager)
 }
