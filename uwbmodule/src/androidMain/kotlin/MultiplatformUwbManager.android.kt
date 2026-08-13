@@ -80,6 +80,9 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
     }
 
     actual fun createConnectionConfig(peerId: String, isAccessory: Boolean ): UwbSessionConfig? {
+        // One config per peer: a repeat discovery must not regenerate the session key mid-exchange,
+        // or the copy we already advertised over BLE would no longer match what we range with.
+        connectionConfigs[peerId]?.let { return it }
         val localScope = if(isAccessory){
             controllerScope
         } else {

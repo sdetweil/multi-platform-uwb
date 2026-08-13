@@ -76,6 +76,18 @@ class DeviceDiscoveryManager(
     /** Accessory peers — these stay BLE-connected during ranging and need a stop handshake. */
     private val accessoryPeers = mutableSetOf<String>()
 
+    /**
+     * Maps a peer's stable UWB address (hex) to the peerId currently ranging with it.
+     *
+     * On Android a single phone appears under several randomized BLE addresses because it both scans
+     * and runs a GATT server, so the same physical device arrives under different peerIds. The UWB
+     * address inside the exchanged config is the stable identity, so we key on it and let the newest
+     * connection win — a fresh peerId for a known UWB address supersedes the stale one, keeping one
+     * device entry and one ranging session. Unused on iOS, where the CoreBluetooth UUID is already
+     * stable and the config carries no UWB address.
+     */
+    private val uwbKeyToPeer = mutableMapOf<String, String>()
+
     companion object {
         /** Devices not seen within this window are considered stale and removed. */
         private const val STALE_THRESHOLD_MS = 10_000L
@@ -164,6 +176,7 @@ class DeviceDiscoveryManager(
         exchangedPeers.clear()
         pendingExchanges.clear()
         accessoryPeers.clear()
+        uwbKeyToPeer.clear()
     }
 
     /**
@@ -241,6 +254,24 @@ class DeviceDiscoveryManager(
             pendingExchanges.remove(peerId)
             exchangedPeers.add(peerId)
             if (remoteConfig.isAccessoryDevice || remoteConfig.accessoryData!=null) accessoryPeers.add(peerId)
+
+            // Collapse duplicate BLE identities of the same physical device. When a new peerId reports
+            // a UWB address we're already ranging, the newest connection wins: tear down the stale
+            // peerId so we keep a single device entry and a single session. Skipped on iOS (empty
+            // uwbAddress), where the peerId is already stable.
+            val uwbKey = remoteConfig.uwbAddress.takeIf { it.isNotEmpty() }?.toHexString()
+            if (uwbKey != null) {
+                val prevPeerId = uwbKeyToPeer[uwbKey]
+                if (prevPeerId != null && prevPeerId != peerId) {
+                    multiplatformUwbManager.stopRanging(prevPeerId)
+                    exchangedPeers.remove(prevPeerId)
+                    pendingExchanges.remove(prevPeerId)
+                    accessoryPeers.remove(prevPeerId)
+                    _nearbyDevices.value = _nearbyDevices.value.filterNot { it.id == prevPeerId }
+                    emitEvent(EventType.DeviceDiscovered, peerId, "Merged duplicate identity $prevPeerId (UWB $uwbKey)")
+                }
+                uwbKeyToPeer[uwbKey] = peerId
+            }
 
             emitEvent(
                 EventType.ConfigExchangeComplete, peerId,
