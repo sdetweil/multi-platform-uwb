@@ -255,20 +255,22 @@ class DeviceDiscoveryManager(
             exchangedPeers.add(peerId)
             if (remoteConfig.isAccessoryDevice || remoteConfig.accessoryData!=null) accessoryPeers.add(peerId)
 
-            // Collapse duplicate BLE identities of the same physical device. When a new peerId reports
-            // a UWB address we're already ranging, the newest connection wins: tear down the stale
-            // peerId so we keep a single device entry and a single session. Skipped on iOS (empty
-            // uwbAddress), where the peerId is already stable.
+            // Collapse duplicate BLE identities of the same physical device. A phone both scans and
+            // serves under randomized BLE addresses, so the same device arrives under several peerIds;
+            // the UWB address in the exchanged config is the stable identity. If we're already ranging
+            // that UWB address, keep the first session and ignore the duplicate rather than tearing the
+            // live one down (which churned the session and cancelled its coroutine). Skipped on iOS
+            // (empty uwbAddress), where the peerId is already stable.
             val uwbKey = remoteConfig.uwbAddress.takeIf { it.isNotEmpty() }?.toHexString()
             if (uwbKey != null) {
                 val prevPeerId = uwbKeyToPeer[uwbKey]
                 if (prevPeerId != null && prevPeerId != peerId) {
-                    multiplatformUwbManager.stopRanging(prevPeerId)
-                    exchangedPeers.remove(prevPeerId)
-                    pendingExchanges.remove(prevPeerId)
-                    accessoryPeers.remove(prevPeerId)
-                    _nearbyDevices.value = _nearbyDevices.value.filterNot { it.id == prevPeerId }
-                    emitEvent(EventType.DeviceDiscovered, peerId, "Merged duplicate identity $prevPeerId (UWB $uwbKey)")
+                    // Already ranging this device under another BLE identity. Keep the live session and
+                    // drop this identity's placeholder entry so the UI shows one device, not two.
+                    // peerId stays in exchangedPeers so we don't re-exchange with the duplicate.
+                    _nearbyDevices.value = _nearbyDevices.value.filterNot { it.id == peerId }
+                    emitEvent(EventType.DeviceDiscovered, peerId, "Ignored duplicate identity of $prevPeerId (UWB $uwbKey)")
+                    return
                 }
                 uwbKeyToPeer[uwbKey] = peerId
             }

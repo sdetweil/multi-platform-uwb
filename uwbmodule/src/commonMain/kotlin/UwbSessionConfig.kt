@@ -147,6 +147,26 @@ data class UwbSessionConfig(
         return timestamp<=other.timestamp
         }
 
+    /**
+     * Deterministic session-owner election for Android peer-to-peer, independent of BLE identity.
+     *
+     * The peer with the lexicographically smaller UWB address owns the session parameters (sessionId
+     * and static-STS key), so both ends agree on one set even when a phone is seen under several
+     * randomized BLE addresses. Timestamps can't decide this: a device mints a fresh config (new
+     * timestamp) per BLE identity, so the two ends may compare different timestamp pairs and disagree
+     * on the owner. The UWB address is stable across identities, so it gives a symmetric result.
+     */
+    fun ownsSessionOver(other: UwbSessionConfig): Boolean {
+        val a = uwbAddress
+        val b = other.uwbAddress
+        val n = minOf(a.size, b.size)
+        for (i in 0 until n) {
+            val diff = (a[i].toInt() and 0xFF) - (b[i].toInt() and 0xFF)
+            if (diff != 0) return diff < 0
+        }
+        return a.size <= b.size
+    }
+
     override fun hashCode(): Int {
         var result :Int = sessionId!!
         result =  31 * result + channel

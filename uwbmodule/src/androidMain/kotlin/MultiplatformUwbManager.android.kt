@@ -48,6 +48,9 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
     private var controllerScope: UwbControllerSessionScope? = null
     private var controleeScope: UwbControleeSessionScope? = null
 
+    /** Static-STS key, generated once and reused so it is stable across a peer's BLE identities. */
+    private var localSessionKey: ByteArray? = null
+
     /** Default channel and preamble — used when generating local config. */
     companion object {
         const val DEFAULT_CHANNEL = 9
@@ -98,10 +101,12 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
 
         val sessionId:Int? = localAddress?.fold(0) { acc, b -> acc * 31 + (b.toInt() and 0xFF) }
 
-        // Generate the static-STS key lazily and cache it, so the key we send over
-        // BLE is the same one we compare/use when ranging starts.
-        val key = ByteArray(SESSION_KEY_SIZE)
+        // Generate the static-STS key once per manager and reuse it. A phone seen under several
+        // randomized BLE addresses would otherwise hand out a different key per identity, and the one
+        // the peer keeps might not match the one we range with. One cached key keeps them consistent.
+        val key = localSessionKey ?: ByteArray(SESSION_KEY_SIZE)
             .also { SecureRandom().nextBytes(it) }
+            .also { localSessionKey = it }
 
         Log.d(TAG, "phone address is ${localAddress?.toHexString()}")
 
@@ -247,6 +252,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
         activeJobs.clear()
         peerScopes.clear()
         connectionConfigs.clear()
+        localSessionKey = null
         coroutineScope.cancel()
     }
 }

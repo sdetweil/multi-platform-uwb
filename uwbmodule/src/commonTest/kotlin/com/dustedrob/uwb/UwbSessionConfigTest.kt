@@ -279,6 +279,25 @@ class UwbSessionConfigTest {
     }
 
     @Test
+    fun ownsSessionOverIsSymmetricByAddress() {
+        // The smaller UWB address owns the session, and the decision is the mirror image on each side,
+        // so exactly one peer ends up the owner regardless of BLE identity or timestamp.
+        val a = UwbSessionConfig(1, 9, 10, byteArrayOf(0x05, 0x88.toByte()), timestamp = 999)
+        val b = UwbSessionConfig(2, 9, 10, byteArrayOf(0x09, 0x4D), timestamp = 1)
+        assertTrue(a.ownsSessionOver(b))       // 0x0588 < 0x094D, and it wins despite the larger timestamp
+        assertTrue(!b.ownsSessionOver(a))
+    }
+
+    @Test
+    fun ownsSessionOverBreaksTieOnLength() {
+        // A prefix loses to the longer address, so the result stays a strict, consistent ordering.
+        val shorter = UwbSessionConfig(1, 9, 10, byteArrayOf(0x0A))
+        val longer = UwbSessionConfig(2, 9, 10, byteArrayOf(0x0A, 0x01))
+        assertTrue(shorter.ownsSessionOver(longer))
+        assertTrue(!longer.ownsSessionOver(shorter))
+    }
+
+    @Test
     fun timestampRoundTrips() {
         // The 64-bit creation timestamp must survive serialization so peers can pick a winner.
         val config = UwbSessionConfig(

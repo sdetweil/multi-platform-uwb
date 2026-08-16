@@ -112,29 +112,33 @@ class DeviceDiscoveryManagerTest {
     @Test
     fun sameUwbAddressUnderTwoBleIdsCollapsesToOne() {
         // A phone that both scans and serves shows up under two randomized BLE ids but reports the
-        // same UWB address; the newest peerId wins and the stale one is torn down.
+        // same UWB address; the first live session is kept and the later duplicate is ignored (no
+        // teardown of the running session).
         val uwbKeyToPeer = mutableMapOf<String, String>()
-        val devices = mutableListOf<NearbyDevice>()
-        val stopped = mutableListOf<String>()
+        val devices = mutableListOf(
+            NearbyDevice("58:CD:3D:CF:63:7F", "UWB Device"),
+            NearbyDevice("43:E3:E1:1B:D4:97", "UWB Device"),
+        )
+        val ignored = mutableListOf<String>()
 
         fun onConfigExchanged(peerId: String, uwbKey: String?) {
             if (uwbKey != null) {
                 val prev = uwbKeyToPeer[uwbKey]
                 if (prev != null && prev != peerId) {
-                    stopped.add(prev)
-                    devices.removeAll { it.id == prev }
+                    ignored.add(peerId)
+                    devices.removeAll { it.id == peerId }
+                    return
                 }
                 uwbKeyToPeer[uwbKey] = peerId
             }
-            if (devices.none { it.id == peerId }) devices.add(NearbyDevice(peerId, "UWB Device"))
         }
 
-        onConfigExchanged("58:CD:3D:CF:63:7F", "094d") // seen via our GATT server
-        onConfigExchanged("43:E3:E1:1B:D4:97", "094d") // same phone, seen via our scan
+        onConfigExchanged("58:CD:3D:CF:63:7F", "094d") // seen via our GATT server (kept)
+        onConfigExchanged("43:E3:E1:1B:D4:97", "094d") // same phone, seen via our scan (ignored)
 
         assertEquals(1, devices.size)
-        assertEquals("43:E3:E1:1B:D4:97", devices[0].id)
-        assertEquals(listOf("58:CD:3D:CF:63:7F"), stopped)
+        assertEquals("58:CD:3D:CF:63:7F", devices[0].id)
+        assertEquals(listOf("43:E3:E1:1B:D4:97"), ignored)
     }
 
     @Test

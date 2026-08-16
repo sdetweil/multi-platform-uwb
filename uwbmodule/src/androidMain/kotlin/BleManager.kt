@@ -82,7 +82,9 @@ actual class BleManager(
         if (remoteConfig != null) {
             val connectionLocalConfig=uwbManager.getConnectionConfig(peerId)
             if(connectionLocalConfig != null) {
-                val rangingRemoteConfig = if (remoteConfig.isOlder(connectionLocalConfig)) {
+                // Both ends adopt the session-owner's parameters (elected by UWB address, stable across
+                // BLE identities) and range against the peer's UWB address.
+                val rangingRemoteConfig = if (remoteConfig.ownsSessionOver(connectionLocalConfig)) {
                     remoteConfig
                 } else {
                     connectionLocalConfig.copy(uwbAddress = remoteConfig.uwbAddress)
