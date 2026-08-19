@@ -41,6 +41,16 @@ data class UwbSessionConfig(
      * in the manager instead.
      */
     val timestamp: Long = 0L,
+    /**
+     * Android peer-to-peer only: this device's **controller-scope** UWB address, sent alongside the
+     * controlee address in [uwbAddress]. A phone holds both a controller and a controlee session
+     * scope (each with its own fixed address), and the two ends can't range as two controlees, so one
+     * is elected controller. Carrying both addresses up front means that once roles are known, the
+     * controller ranges against the peer's controlee address and the controlee ranges against the
+     * peer's controller address, without either side minting a new address after the exchange. Null
+     * on iOS and for accessories.
+     */
+    val controllerAddress: ByteArray? = null,
 ) {
     /**
      * Serialize to a simple binary format for BLE GATT exchange.
@@ -52,6 +62,7 @@ data class UwbSessionConfig(
      * [2B token.size][token bytes]   // size=0 if null
      * [2B key.size][key bytes]       // optional trailer; absent or size=0 if null
      * [2B acc.size][acc bytes]       // optional trailer; absent or size=0 if null
+     * [2B ctrl.size][ctrl bytes]     // optional trailer; controller-scope address (Android P2P)
      * ```
      * Multi-byte integers (sessionId, channel, preambleIndex, and the 2-byte length prefixes) are
      * little-endian to match the FiRa/UWB convention, so accessory firmware can lay the struct out
@@ -63,7 +74,8 @@ data class UwbSessionConfig(
         val tokenBytes = discoveryToken ?: ByteArray(0)
         val keyBytes = sessionKey ?: ByteArray(0)
         val accBytes = accessoryData ?: ByteArray(0)
-        val size = 1 +8 + 4 + 4 + 4 + 2 + uwbAddress.size + 2 + tokenBytes.size + 2 + keyBytes.size + 2 + accBytes.size
+        val ctrlBytes = controllerAddress ?: ByteArray(0)
+        val size = 1 +8 + 4 + 4 + 4 + 2 + uwbAddress.size + 2 + tokenBytes.size + 2 + keyBytes.size + 2 + accBytes.size + 2 + ctrlBytes.size
         val buf = ByteArray(size)
         var pos = 0
 
@@ -121,6 +133,12 @@ data class UwbSessionConfig(
         buf[pos++] = accBytes.size.toByte()
         buf[pos++] = (accBytes.size shr 8).toByte()
         accBytes.copyInto(buf, pos)
+        pos += accBytes.size
+
+        // controllerAddress (optional trailer)
+        buf[pos++] = ctrlBytes.size.toByte()
+        buf[pos++] = (ctrlBytes.size shr 8).toByte()
+        ctrlBytes.copyInto(buf, pos)
 
         return buf
     }
@@ -134,13 +152,16 @@ data class UwbSessionConfig(
         val otherKey = other.sessionKey ?: ByteArray(0)
         val thisAcc = accessoryData ?: ByteArray(0)
         val otherAcc = other.accessoryData ?: ByteArray(0)
+        val thisCtrl = controllerAddress ?: ByteArray(0)
+        val otherCtrl = other.controllerAddress ?: ByteArray(0)
         return sessionId == other.sessionId &&
                 channel == other.channel &&
                 preambleIndex == other.preambleIndex &&
                 uwbAddress.contentEquals(other.uwbAddress) &&
                 thisToken.contentEquals(otherToken) &&
                 thisKey.contentEquals(otherKey) &&
-                thisAcc.contentEquals(otherAcc)
+                thisAcc.contentEquals(otherAcc) &&
+                thisCtrl.contentEquals(otherCtrl)
     }
    
     fun isOlder(other: UwbSessionConfig): Boolean {
@@ -175,6 +196,7 @@ data class UwbSessionConfig(
         result =  31 * result + (discoveryToken?.contentHashCode() ?: 0)
         result =  31 * result + (sessionKey?.contentHashCode() ?: 0)
         result =  31 * result + (accessoryData?.contentHashCode() ?: 0)
+        result =  31 * result + (controllerAddress?.contentHashCode() ?: 0)
         return result
     }
 
@@ -218,7 +240,15 @@ data class UwbSessionConfig(
             // Optional accessory-data trailer (absent in older payloads).
             val accessoryData = if (pos + 2 <= bytes.size) {
                 val accLen = readShort(bytes, pos); pos += 2
-                if (accLen > 0 && pos + accLen <= bytes.size) bytes.copyOfRange(pos, pos + accLen) else null
+                if (accLen > 0 && pos + accLen <= bytes.size) bytes.copyOfRange(pos, pos + accLen).also { pos += accLen } else null
+            } else {
+                null
+            }
+
+            // Optional controller-address trailer (absent in older payloads).
+            val controllerAddress = if (pos + 2 <= bytes.size) {
+                val ctrlLen = readShort(bytes, pos); pos += 2
+                if (ctrlLen > 0 && pos + ctrlLen <= bytes.size) bytes.copyOfRange(pos, pos + ctrlLen) else null
             } else {
                 null
             }
@@ -232,7 +262,8 @@ data class UwbSessionConfig(
                 discoveryToken = discoveryToken,
                 sessionKey = sessionKey,
                 accessoryData = accessoryData,
-                isAccessoryDevice = accessoryDevice
+                isAccessoryDevice = accessoryDevice,
+                controllerAddress = controllerAddress,
             )
         }
 

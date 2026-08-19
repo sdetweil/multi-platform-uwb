@@ -4,7 +4,6 @@ import android.util.Log
 import androidx.core.uwb.RangingParameters
 import androidx.core.uwb.RangingResult
 import androidx.core.uwb.UwbAddress
-import androidx.core.uwb.UwbClientSessionScope
 import androidx.core.uwb.UwbComplexChannel
 import androidx.core.uwb.UwbControleeSessionScope
 import androidx.core.uwb.UwbControllerSessionScope
@@ -33,17 +32,11 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
     private var sendToPeerCallback: ((String, ByteArray) -> Unit)? = null
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    /** The session scope obtained during [initialize], which provides our local UWB address. */
-    //private var sessionScope: UwbClientSessionScope? = null
-
     /** Active ranging coroutine jobs, keyed by peer ID. Cancel to stop ranging. */
     private val activeJobs = mutableMapOf<String, Job>()
 
     /** Local config we created per peer (our address, session id, key). */
     private val connectionConfigs = mutableMapOf<String, UwbSessionConfig>()
-
-    /** Live platform ranging scope per peer, kept out of the serializable [UwbSessionConfig]. */
-    private val peerScopes = mutableMapOf<String, UwbClientSessionScope>()
 
     private var controllerScope: UwbControllerSessionScope? = null
     private var controleeScope: UwbControleeSessionScope? = null
@@ -110,8 +103,10 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
 
         Log.d(TAG, "phone address is ${localAddress?.toHexString()}")
 
-        // Track the live scope per peer, separate from the serializable config.
-        localScope?.let { peerScopes[peerId] = it }
+        // For peer-to-peer, also advertise our controller-scope address so that after role election
+        // the controller can range against the peer's controlee address and vice versa. Accessories
+        // don't need it (the phone is always controller and the accessory adopts our params).
+        val controllerAddr = if (isAccessory) null else controllerScope?.localAddress?.address
 
         val connectionConfig: UwbSessionConfig? = if(sessionId !=null ) {
             UwbSessionConfig(
@@ -122,6 +117,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                 uwbAddress = localAddress,
                 discoveryToken = null,
                 sessionKey = key,
+                controllerAddress = controllerAddr,
             )
         } else {
             null
@@ -143,23 +139,45 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
         // Cancel any existing ranging job for this peer
         activeJobs[peerId]?.cancel()
 
+        val localConfig = getConnectionConfig(peerId)
+
         val job = coroutineScope.launch {
             try {
+                // Elect roles. Two controlee scopes set up but never range, so exactly one side must be
+                // controller. The session owner (smaller controlee UWB address, stable across BLE
+                // identities) is the controller; an accessory always leaves the phone as controller.
+                val isAccessory = remoteConfig.isAccessoryDevice
+                val amController = isAccessory || localConfig == null ||
+                        localConfig.ownsSessionOver(remoteConfig)
 
-                // Use the remote peer's UWB address
-                val peerAddress = UwbAddress(remoteConfig.uwbAddress)
-                val peerDevice = UwbDevice(peerAddress)
-                Log.d(TAG, "ranging peer device address is ${remoteConfig.uwbAddress.toHexString()}")
+                // Use the pre-created scope for our role, so we range with an address the peer already
+                // received (never mint a new scope/address after the exchange).
+                val scope = if (amController) controllerScope else controleeScope
+
+                // Range against the peer's opposite-role address: the controller talks to the peer's
+                // controlee address ([uwbAddress]); the controlee talks to the peer's controller
+                // address ([controllerAddress]).
+                val peerAddressBytes = when {
+                    isAccessory -> remoteConfig.uwbAddress
+                    amController -> remoteConfig.uwbAddress
+                    else -> remoteConfig.controllerAddress ?: remoteConfig.uwbAddress
+                }
+
+                // Session parameters come from the controller (owner); the controlee adopts them.
+                val paramsConfig = if (amController) (localConfig ?: remoteConfig) else remoteConfig
+
+                val peerDevice = UwbDevice(UwbAddress(peerAddressBytes))
+                Log.d(TAG, "ranging peer device address is ${peerAddressBytes.toHexString()} (amController=$amController)")
 
                 val rangingParameters: RangingParameters = RangingParameters(
                     uwbConfigType = RangingParameters.CONFIG_UNICAST_DS_TWR,
-                    sessionId = remoteConfig.sessionId,
+                    sessionId = paramsConfig.sessionId,
                     subSessionId = 0,
-                    sessionKeyInfo = remoteConfig.sessionKey,
+                    sessionKeyInfo = paramsConfig.sessionKey,
                     subSessionKeyInfo = null,
                     complexChannel = UwbComplexChannel(
-                        channel = remoteConfig.channel,
-                        preambleIndex = remoteConfig.preambleIndex
+                        channel = paramsConfig.channel,
+                        preambleIndex = paramsConfig.preambleIndex
                     ),
                     peerDevices = listOf(peerDevice),
                     updateRateType = RangingParameters.RANGING_UPDATE_RATE_AUTOMATIC
@@ -167,7 +185,7 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
 
                 Log.d(
                     TAG,
-                    "Starting ranging with $peerId — session=${remoteConfig.sessionId.toHexString()} ch=${remoteConfig.channel} pai=${remoteConfig.preambleIndex}  address=${remoteConfig.uwbAddress.toHexString()}"
+                    "Starting ranging with $peerId — session=${paramsConfig.sessionId.toHexString()} ch=${paramsConfig.channel} pai=${paramsConfig.preambleIndex}  peer=${peerAddressBytes.toHexString()} amController=$amController"
                 )
                 // if this is an accessory, send the config it should use now, as we have done all the pre-checking
                 if(remoteConfig.isAccessoryDevice) {
@@ -176,9 +194,8 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                     message?.let { sendToPeerCallback?.invoke(peerId, it) }
                 }
 
-                val scope = peerScopes[peerId]
                 if (scope == null) {
-                    errorCallback?.invoke("No UWB session scope for $peerId; createConnectionConfig must run first")
+                    errorCallback?.invoke("No UWB session scope for $peerId; initialize() must run first")
                     activeJobs.remove(peerId)
                     return@launch
                 }
@@ -250,7 +267,6 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
     actual suspend fun cleanup() {
         activeJobs.values.forEach { it.cancel() }
         activeJobs.clear()
-        peerScopes.clear()
         connectionConfigs.clear()
         localSessionKey = null
         coroutineScope.cancel()

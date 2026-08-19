@@ -279,6 +279,35 @@ class UwbSessionConfigTest {
     }
 
     @Test
+    fun controllerAddressRoundTrips() {
+        // The controller-scope address rides along as an optional trailer so P2P peers can pair
+        // controller-to-controlee after role election.
+        val ctrl = byteArrayOf(0xAB.toByte(), 0xCD.toByte())
+        val config = UwbSessionConfig(
+            sessionId = 7,
+            channel = 9,
+            preambleIndex = 10,
+            uwbAddress = byteArrayOf(0x01, 0x02),
+            sessionKey = ByteArray(8) { it.toByte() },
+            controllerAddress = ctrl,
+        )
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        assertNotNull(restored)
+        assertNotNull(restored.controllerAddress)
+        assertTrue(ctrl.contentEquals(restored.controllerAddress!!))
+        assertEquals(config, restored)
+    }
+
+    @Test
+    fun controllerAddressNullWhenAbsent() {
+        // Older/iOS/accessory payloads carry no controller address; it parses back as null.
+        val config = UwbSessionConfig(1, 2, 3, byteArrayOf(9), discoveryToken = byteArrayOf(1, 2))
+        val restored = UwbSessionConfig.fromByteArray(config.toByteArray())
+        assertNotNull(restored)
+        assertNull(restored.controllerAddress)
+    }
+
+    @Test
     fun ownsSessionOverIsSymmetricByAddress() {
         // The smaller UWB address owns the session, and the decision is the mirror image on each side,
         // so exactly one peer ends up the owner regardless of BLE identity or timestamp.
