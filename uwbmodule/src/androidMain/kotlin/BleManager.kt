@@ -35,6 +35,7 @@ actual class BleManager(
 
     private val context: Context,
     private val config: BleDiscoveryConfig = BleDiscoveryConfig(),
+    private val uwbManager: MultiplatformUwbManager = MultiplatformUwbManager()
 ) {
     private val TAG = "BleManager"
 
@@ -59,7 +60,6 @@ actual class BleManager(
 
     // GATT server state
     private var gattServer: BluetoothGattServer? = null
-    private var localConfig: UwbSessionConfig? = null
 
     // Track discovered peripherals for GATT client connections
     private val discoveredDevices = mutableMapOf<String, AccessoryDevice>()
@@ -78,10 +78,16 @@ actual class BleManager(
 
     /** Deliver a peer's serialized config to the app (single entry point, no duplicate dispatch). */
     private fun deliverRemoteConfig(peerId: String, bytes: ByteArray?) {
-        val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it) }
+        val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it,false) }
         if (remoteConfig != null) {
-            Log.d(TAG, "received config from $peerId")
-            configExchangedCallback?.invoke(peerId, remoteConfig)
+            val connectionLocalConfig=uwbManager.getConnectionConfig(peerId)
+            if(connectionLocalConfig != null) {
+                // Pass the peer's config through unchanged. Role election and parameter/address
+                // selection happen in startRanging, which needs the peer's controlee and controller
+                // addresses both intact.
+                Log.d(TAG, "received config from $peerId")
+                configExchangedCallback?.invoke(peerId, remoteConfig)
+            }
         } else {
             Log.e(TAG, "failed to parse config from $peerId")
         }
@@ -93,12 +99,16 @@ actual class BleManager(
         Log.d(TAG, "received accessory config from $peerId (${raw.size} bytes)")
         val remoteConfig = raw.let { UwbSessionConfig.fromByteArray(it, true) }
         if (remoteConfig != null) {
-            if (localConfig == null) { // we need our own address to send to the accessory (controller)
+            if (uwbManager.getConnectionConfig(peerId) == null) { // we need our own address to send to the accessory (controller)
                 Log.e(TAG, "local config not created")
                 return
             }
-
-            configExchangedCallback?.invoke(peerId, remoteConfig) // this starts ranging
+            // accessory has decided on anything except its hwAddress, so use the local scope.... to run the session
+            // this is cause the local uwbSessionConfig to be sent to the accessory which has all the same data except OUR hwAddress
+            val rangingRemoteConfig= uwbManager.getConnectionConfig(peerId)!!.copy(
+                uwbAddress=remoteConfig.uwbAddress, isAccessoryDevice = true
+            )
+            configExchangedCallback?.invoke(peerId, rangingRemoteConfig) // this starts ranging
         } else {
             Log.e(TAG, "failed to parse config from $peerId")
         }
@@ -130,6 +140,7 @@ actual class BleManager(
                 }
             }
             discoveredDevices[deviceAddress] = AccessoryDevice(device, profile)
+            uwbManager.createConnectionConfig(deviceAddress, profile?.exchange == ExchangeProtocol.AccessoryNotify)
             Log.d(TAG, "Found device: $deviceName ($deviceAddress) profile=${profile?.name}")
             deviceDiscoveredCallback?.invoke(deviceAddress, deviceName)
         }
@@ -189,7 +200,10 @@ actual class BleManager(
                 it.readFromUuid.equals(characteristic.uuid.toString(), ignoreCase = true)
             }
             if (isReadChar) {
-                val configBytes = localConfig?.toByteArray() ?: ByteArray(0)
+                var connectionLocalConfig: UwbSessionConfig?=uwbManager.getConnectionConfig(device.address)
+                connectionLocalConfig =
+                    connectionLocalConfig ?: uwbManager.createConnectionConfig(device.address,false)
+                val configBytes = connectionLocalConfig?.toByteArray() ?: ByteArray(0)
                 val responseBytes = if (offset < configBytes.size) {
                     configBytes.copyOfRange(offset, configBytes.size)
                 } else {
@@ -376,8 +390,7 @@ actual class BleManager(
     // ---- Public API: GATT Server ----
 
     @RequiresPermission(BLUETOOTH_CONNECT)
-    actual fun startGattServer(localConfig: UwbSessionConfig) {
-        this.localConfig = localConfig
+    actual fun startGattServer() {
         if (!hasConnectPermission()) {
             Log.e(TAG, "Missing BLUETOOTH_CONNECT permission for GATT server")
             return
@@ -399,7 +412,6 @@ actual class BleManager(
         try {
             gattServer?.close()
             gattServer = null
-            localConfig = null
             Log.d(TAG, "GATT server stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping GATT server: ${e.message}")
@@ -436,7 +448,7 @@ actual class BleManager(
     // ---- Public API: GATT Client (config exchange) ----
 
     @RequiresPermission(BLUETOOTH_CONNECT)
-    actual fun connectAndExchangeConfig(peerId: String, localConfig: UwbSessionConfig) {
+    actual fun connectAndExchangeConfig(peerId: String, connectionConfig: UwbSessionConfig) {
         val device = discoveredDevices[peerId]?.bleDevice
         if (device == null) {
             Log.e(TAG, "No BluetoothDevice cached for $peerId")
@@ -552,14 +564,14 @@ actual class BleManager(
                     val readUuid = profile?.readFromUuid?.let { UUID.fromString(it.uppercase()) }
                     if (characteristic.uuid == readUuid) {
                         deliverRemoteConfig(peerId, characteristic.value)
-
+                        Log.d(TAG, "sending config to remote")
                         // Step 2: write our config back to the peer.
                         val service = gatt.getService(UUID.fromString(profile!!.discoveryServiceUuid.uppercase()))
                         val writeChar = service?.getCharacteristic(UUID.fromString(profile.writeToUuid.uppercase()))
                         if (writeChar != null) {
                             queue?.enqueue(
                                 BleCommand.WriteCharacteristic(
-                                    writeChar, localConfig.toByteArray(),
+                                    writeChar, connectionConfig.toByteArray(),
                                     BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                                 )
                             )

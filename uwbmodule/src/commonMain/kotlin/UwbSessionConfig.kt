@@ -3,15 +3,12 @@ package com.dustedrob.uwb
 /**
  * Platform-agnostic UWB session configuration exchanged between peers via BLE GATT.
  *
- * On Android: contains UWB address, session ID, channel, and preamble index.
+ * On Android: contains creation timestamp, UWB address, session ID, channel, and preamble index.
  * On iOS: contains the NearbyInteraction discovery token (serialized).
  */
 data class UwbSessionConfig(
     /** Agreed-upon session identifier. Both peers must use the same value. */
-
-
     val sessionId: Int,
-
     /** UWB channel number (e.g., 9). */
     val channel: Int,
     /** Preamble index for the UWB channel (e.g., 10). */
@@ -37,6 +34,23 @@ data class UwbSessionConfig(
     val accessoryData: ByteArray? = null,
     // indicates if this was created by accessory device info (android)
     val isAccessoryDevice: Boolean = false,
+    /**
+     * Creation time (epoch millis), exchanged so both peers can deterministically pick a winner:
+     * the older config owns the session parameters. The live platform ranging handle
+     * (Android session scope / iOS NISession) is kept out of this wire model and tracked per peer
+     * in the manager instead.
+     */
+    val timestamp: Long = 0L,
+    /**
+     * Android peer-to-peer only: this device's **controller-scope** UWB address, sent alongside the
+     * controlee address in [uwbAddress]. A phone holds both a controller and a controlee session
+     * scope (each with its own fixed address), and the two ends can't range as two controlees, so one
+     * is elected controller. Carrying both addresses up front means that once roles are known, the
+     * controller ranges against the peer's controlee address and the controlee ranges against the
+     * peer's controller address, without either side minting a new address after the exchange. Null
+     * on iOS and for accessories.
+     */
+    val controllerAddress: ByteArray? = null,
 ) {
     /**
      * Serialize to a simple binary format for BLE GATT exchange.
@@ -48,6 +62,7 @@ data class UwbSessionConfig(
      * [2B token.size][token bytes]   // size=0 if null
      * [2B key.size][key bytes]       // optional trailer; absent or size=0 if null
      * [2B acc.size][acc bytes]       // optional trailer; absent or size=0 if null
+     * [2B ctrl.size][ctrl bytes]     // optional trailer; controller-scope address (Android P2P)
      * ```
      * Multi-byte integers (sessionId, channel, preambleIndex, and the 2-byte length prefixes) are
      * little-endian to match the FiRa/UWB convention, so accessory firmware can lay the struct out
@@ -59,12 +74,24 @@ data class UwbSessionConfig(
         val tokenBytes = discoveryToken ?: ByteArray(0)
         val keyBytes = sessionKey ?: ByteArray(0)
         val accBytes = accessoryData ?: ByteArray(0)
-        val size = 1 + 4 + 4 + 4 + 2 + uwbAddress.size + 2 + tokenBytes.size + 2 + keyBytes.size + 2 + accBytes.size
+        val ctrlBytes = controllerAddress ?: ByteArray(0)
+        val size = 1 +8 + 4 + 4 + 4 + 2 + uwbAddress.size + 2 + tokenBytes.size + 2 + keyBytes.size + 2 + accBytes.size + 2 + ctrlBytes.size
         val buf = ByteArray(size)
         var pos = 0
 
         // Version
         buf[pos++] = PROTOCOL_VERSION
+
+        // timestamp (LE, 64-bit) — serialize the actual property so both peers can
+        // compare ages; a local `val timestamp = 0` used to shadow it and always sent 0.
+        buf[pos++]=timestamp.toByte()
+        buf[pos++]=(timestamp shr 8).toByte()
+        buf[pos++]=(timestamp shr 16).toByte()
+        buf[pos++]=(timestamp shr 24).toByte()
+        buf[pos++]=(timestamp shr 32).toByte()
+        buf[pos++]=(timestamp shr 40).toByte()
+        buf[pos++]=(timestamp shr 48).toByte()
+        buf[pos++]=(timestamp shr 56).toByte()
 
         // sessionId (LE)
         buf[pos++] = sessionId.toByte()
@@ -106,6 +133,12 @@ data class UwbSessionConfig(
         buf[pos++] = accBytes.size.toByte()
         buf[pos++] = (accBytes.size shr 8).toByte()
         accBytes.copyInto(buf, pos)
+        pos += accBytes.size
+
+        // controllerAddress (optional trailer)
+        buf[pos++] = ctrlBytes.size.toByte()
+        buf[pos++] = (ctrlBytes.size shr 8).toByte()
+        ctrlBytes.copyInto(buf, pos)
 
         return buf
     }
@@ -119,36 +152,68 @@ data class UwbSessionConfig(
         val otherKey = other.sessionKey ?: ByteArray(0)
         val thisAcc = accessoryData ?: ByteArray(0)
         val otherAcc = other.accessoryData ?: ByteArray(0)
+        val thisCtrl = controllerAddress ?: ByteArray(0)
+        val otherCtrl = other.controllerAddress ?: ByteArray(0)
         return sessionId == other.sessionId &&
                 channel == other.channel &&
                 preambleIndex == other.preambleIndex &&
                 uwbAddress.contentEquals(other.uwbAddress) &&
                 thisToken.contentEquals(otherToken) &&
                 thisKey.contentEquals(otherKey) &&
-                thisAcc.contentEquals(otherAcc)
+                thisAcc.contentEquals(otherAcc) &&
+                thisCtrl.contentEquals(otherCtrl)
+    }
+   
+    fun isOlder(other: UwbSessionConfig): Boolean {
+        return timestamp<=other.timestamp
+        }
+
+    /**
+     * Deterministic session-owner election for Android peer-to-peer, independent of BLE identity.
+     *
+     * The peer with the lexicographically smaller UWB address owns the session parameters (sessionId
+     * and static-STS key), so both ends agree on one set even when a phone is seen under several
+     * randomized BLE addresses. Timestamps can't decide this: a device mints a fresh config (new
+     * timestamp) per BLE identity, so the two ends may compare different timestamp pairs and disagree
+     * on the owner. The UWB address is stable across identities, so it gives a symmetric result.
+     */
+    fun ownsSessionOver(other: UwbSessionConfig): Boolean {
+        val a = uwbAddress
+        val b = other.uwbAddress
+        val n = minOf(a.size, b.size)
+        for (i in 0 until n) {
+            val diff = (a[i].toInt() and 0xFF) - (b[i].toInt() and 0xFF)
+            if (diff != 0) return diff < 0
+        }
+        return a.size <= b.size
     }
 
     override fun hashCode(): Int {
-        var result :Int = sessionId
+        var result :Int = sessionId!!
         result =  31 * result + channel
         result =  31 * result + preambleIndex
         result =  31 * result + uwbAddress.contentHashCode()
         result =  31 * result + (discoveryToken?.contentHashCode() ?: 0)
         result =  31 * result + (sessionKey?.contentHashCode() ?: 0)
         result =  31 * result + (accessoryData?.contentHashCode() ?: 0)
+        result =  31 * result + (controllerAddress?.contentHashCode() ?: 0)
         return result
     }
 
     companion object {
         private const val PROTOCOL_VERSION: Byte = 1
 
-        fun fromByteArray(bytes: ByteArray, accessoryDevice: Boolean= false, accessoryData:ByteArray? = null): UwbSessionConfig? {
-            if (bytes.size < 17) return null // minimum: 1(ver) + 4(sid) + 4(ch) + 4(pre) + 2(addrLen) + 2(tokLen)
+        fun fromByteArray(
+            bytes: ByteArray,
+            accessoryDevice: Boolean = false
+        ): UwbSessionConfig? {
+            if (bytes.size < 25) return null // minimum: 1(ver) + 8(ts) + 4(sid) + 4(ch) + 4(pre) + 2(addrLen) + 2(tokLen)
             var pos = 0
 
             val version = bytes[pos++]
             if (version != PROTOCOL_VERSION) return null
 
+	        val timestamp = readLong(bytes,pos); pos+=8
             val sessionId = readInt(bytes, pos); pos += 4
             val channel = readInt(bytes, pos); pos += 4
             val preambleIndex = readInt(bytes, pos); pos += 4
@@ -175,13 +240,21 @@ data class UwbSessionConfig(
             // Optional accessory-data trailer (absent in older payloads).
             val accessoryData = if (pos + 2 <= bytes.size) {
                 val accLen = readShort(bytes, pos); pos += 2
-                if (accLen > 0 && pos + accLen <= bytes.size) bytes.copyOfRange(pos, pos + accLen) else null
+                if (accLen > 0 && pos + accLen <= bytes.size) bytes.copyOfRange(pos, pos + accLen).also { pos += accLen } else null
             } else {
                 null
             }
-            // Note: sessionId == 0 is a valid value (iOS local configs use it, and the controller
-            // assigns the real id at ranging time), so it must not be treated as "not a config".
+
+            // Optional controller-address trailer (absent in older payloads).
+            val controllerAddress = if (pos + 2 <= bytes.size) {
+                val ctrlLen = readShort(bytes, pos); pos += 2
+                if (ctrlLen > 0 && pos + ctrlLen <= bytes.size) bytes.copyOfRange(pos, pos + ctrlLen) else null
+            } else {
+                null
+            }
+
             return UwbSessionConfig(
+                timestamp = timestamp,
                 sessionId = sessionId,
                 channel = channel,
                 preambleIndex = preambleIndex,
@@ -189,16 +262,28 @@ data class UwbSessionConfig(
                 discoveryToken = discoveryToken,
                 sessionKey = sessionKey,
                 accessoryData = accessoryData,
-                isAccessoryDevice = accessoryDevice
+                isAccessoryDevice = accessoryDevice,
+                controllerAddress = controllerAddress,
             )
         }
 
         // Little-endian readers (least-significant byte first), matching toByteArray.
         private fun readInt(bytes: ByteArray, offset: Int): Int =
             (bytes[offset].toInt() and 0xFF) or
-                    ((bytes[offset + 1].toInt() and 0xFF) shl 8) or
-                    ((bytes[offset + 2].toInt() and 0xFF) shl 16) or
-                    ((bytes[offset + 3].toInt() and 0xFF) shl 24)
+            ((bytes[offset + 1].toInt() and 0xFF) shl 8) or
+            ((bytes[offset + 2].toInt() and 0xFF) shl 16) or
+            ((bytes[offset + 3].toInt() and 0xFF) shl 24)
+
+        private fun readLong(bytes:ByteArray, offset:Int): Long =
+           //add function like readInt above, 4 more bytes
+            ((bytes[offset].toLong() and 0xFFL) or
+            ((bytes[offset + 1].toLong() and 0xFFL) shl 8) or
+            ((bytes[offset + 2].toLong() and 0xFFL) shl 16) or
+            ((bytes[offset + 3].toLong() and 0xFFL) shl 24) or
+            ((bytes[offset + 4].toLong() and 0xFFL) shl 32) or
+            ((bytes[offset + 5].toLong() and 0xFFL) shl 40) or
+            ((bytes[offset + 6].toLong() and 0xFFL) shl 48) or
+            ((bytes[offset + 7].toLong() and 0xFFL) shl 56))
 
         private fun readShort(bytes: ByteArray, offset: Int): Int =
             (bytes[offset].toInt() and 0xFF) or

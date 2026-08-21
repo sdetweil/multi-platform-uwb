@@ -76,6 +76,18 @@ class DeviceDiscoveryManager(
     /** Accessory peers — these stay BLE-connected during ranging and need a stop handshake. */
     private val accessoryPeers = mutableSetOf<String>()
 
+    /**
+     * Maps a peer's stable UWB address (hex) to the peerId currently ranging with it.
+     *
+     * On Android a single phone appears under several randomized BLE addresses because it both scans
+     * and runs a GATT server, so the same physical device arrives under different peerIds. The UWB
+     * address inside the exchanged config is the stable identity, so we key on it and let the newest
+     * connection win — a fresh peerId for a known UWB address supersedes the stale one, keeping one
+     * device entry and one ranging session. Unused on iOS, where the CoreBluetooth UUID is already
+     * stable and the config carries no UWB address.
+     */
+    private val uwbKeyToPeer = mutableMapOf<String, String>()
+
     companion object {
         /** Devices not seen within this window are considered stale and removed. */
         private const val STALE_THRESHOLD_MS = 10_000L
@@ -107,8 +119,12 @@ class DeviceDiscoveryManager(
         }
     }
 
+    fun getConnectionConfig(peerId:String): UwbSessionConfig?{
+        return multiplatformUwbManager.getConnectionConfig((peerId))
+    }
+
     /** Get the local UWB config (address, session ID, channel) for display. */
-    fun getLocalConfig(): UwbSessionConfig? = multiplatformUwbManager.getLocalConfig()
+    //suspend fun getLocalConfig(): UwbSessionConfig? = multiplatformUwbManager.getLocalConfig(false)
 
     suspend fun startScanning() {
         if (isScanning) return
@@ -118,10 +134,7 @@ class DeviceDiscoveryManager(
         multiplatformUwbManager.initialize()
 
         // Start GATT server so peers can exchange configs with us
-        val localConfig = multiplatformUwbManager.getLocalConfig()
-        if (localConfig != null) {
-            bleManager.startGattServer(localConfig)
-        }
+        bleManager.startGattServer()
 
         // Start BLE scanning and advertising
         bleManager.startScanning()
@@ -136,7 +149,7 @@ class DeviceDiscoveryManager(
         }
     }
 
-    fun stopScanning() {
+    suspend fun stopScanning() {
         if (!isScanning) return
         isScanning = false
 
@@ -163,13 +176,14 @@ class DeviceDiscoveryManager(
         exchangedPeers.clear()
         pendingExchanges.clear()
         accessoryPeers.clear()
+        uwbKeyToPeer.clear()
     }
 
     /**
      * Clean up all resources, including UWB manager and BLE manager.
      * Should be called when the manager is no longer needed (e.g., in ViewModel.onCleared).
      */
-    fun cleanup() {
+    suspend fun cleanup() {
         stopScanning()
         multiplatformUwbManager.cleanup()
         bleManager.cleanup()
@@ -218,12 +232,14 @@ class DeviceDiscoveryManager(
 
         // Initiate config exchange if not already done/pending
         if (id !in exchangedPeers && id !in pendingExchanges) {
-            val localConfig = multiplatformUwbManager.getLocalConfig()
-            if (localConfig != null) {
+            val connectionConfig = multiplatformUwbManager.getConnectionConfig(id)
+            if (connectionConfig != null) {
                 pendingExchanges.add(id)
                 emitEvent(EventType.ConfigExchangeStarted, id, "Starting GATT config exchange")
                 updateDeviceStateLocked(id, DeviceState.ExchangingConfig)
-                bleManager.connectAndExchangeConfig(id, localConfig)
+                bleManager.connectAndExchangeConfig(id, connectionConfig)
+            } else {
+                emitEvent(EventType.DeviceDiscovered, id, "no config entry found")
             }
         }
     }
@@ -232,13 +248,32 @@ class DeviceDiscoveryManager(
      * Called when BLE GATT config exchange completes with a peer.
      * Starts UWB ranging with the exchanged config.
      */
-    internal suspend fun onConfigExchanged(peerId: String, remoteConfig: UwbSessionConfig) {
-        mutex.withLock {
+    internal suspend fun onConfigExchanged(peerId: String, remoteConfig: UwbSessionConfig) = mutex.withLock {
             // Guard against duplicate callbacks (both GATT client read and server write fire this)
             if (peerId in exchangedPeers) return
             pendingExchanges.remove(peerId)
             exchangedPeers.add(peerId)
             if (remoteConfig.isAccessoryDevice || remoteConfig.accessoryData!=null) accessoryPeers.add(peerId)
+
+            // Collapse duplicate BLE identities of the same physical device. A phone both scans and
+            // serves under randomized BLE addresses, so the same device arrives under several peerIds;
+            // the UWB address in the exchanged config is the stable identity. If we're already ranging
+            // that UWB address, keep the first session and ignore the duplicate rather than tearing the
+            // live one down (which churned the session and cancelled its coroutine). Skipped on iOS
+            // (empty uwbAddress), where the peerId is already stable.
+            val uwbKey = remoteConfig.uwbAddress.takeIf { it.isNotEmpty() }?.toHexString()
+            if (uwbKey != null) {
+                val prevPeerId = uwbKeyToPeer[uwbKey]
+                if (prevPeerId != null && prevPeerId != peerId) {
+                    // Already ranging this device under another BLE identity. Keep the live session and
+                    // drop this identity's placeholder entry so the UI shows one device, not two.
+                    // peerId stays in exchangedPeers so we don't re-exchange with the duplicate.
+                    _nearbyDevices.value = _nearbyDevices.value.filterNot { it.id == peerId }
+                    emitEvent(EventType.DeviceDiscovered, peerId, "Ignored duplicate identity of $prevPeerId (UWB $uwbKey)")
+                    return
+                }
+                uwbKeyToPeer[uwbKey] = peerId
+            }
 
             emitEvent(
                 EventType.ConfigExchangeComplete, peerId,
@@ -267,7 +302,7 @@ class DeviceDiscoveryManager(
             _nearbyDevices.value = existingDevices
 
             emitEvent(EventType.RangingStarted, peerId, "UWB ranging started")
-        }
+        
 
         // Start UWB ranging outside the lock (startRanging may take time)
         multiplatformUwbManager.startRanging(peerId, remoteConfig)

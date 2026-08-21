@@ -4,12 +4,14 @@ import android.content.Context
 import androidx.core.uwb.UwbManager
 
 actual class ManagerFactory(private val context: Context) {
-    actual fun createUwbManager(): MultiplatformUwbManager {
-        val uwbManager = UwbManager.createInstance(context)
-        return MultiplatformUwbManager(uwbManager)
+    // One shared UWB manager so BleManager and DeviceDiscoveryManager see the same per-peer
+    // scopes and connection configs (previously bridged via process-global static maps).
+    private val uwbManager: MultiplatformUwbManager by lazy {
+        MultiplatformUwbManager(UwbManager.createInstance(context))
     }
 
-    actual fun createBleManager(config: BleDiscoveryConfig): BleManager {
-        return BleManager(context, config)
-    }
+    actual fun createUwbManager(): MultiplatformUwbManager = uwbManager
+
+    actual fun createBleManager(config: BleDiscoveryConfig): BleManager =
+        BleManager(context, config, uwbManager)
 }

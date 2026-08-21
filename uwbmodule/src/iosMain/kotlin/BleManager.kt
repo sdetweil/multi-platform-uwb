@@ -8,6 +8,7 @@ import platform.darwin.NSObject
 @OptIn(ExperimentalForeignApi::class)
 actual class BleManager(
     private val config: BleDiscoveryConfig = BleDiscoveryConfig(),
+    private val uwbManager: MultiplatformUwbManager = MultiplatformUwbManager()
 ) {
 
     private var centralManager: CBCentralManager? = null
@@ -17,7 +18,7 @@ actual class BleManager(
     private var configExchangedCallback: ((String, UwbSessionConfig) -> Unit)? = null
 
     // GATT server state
-    private var localConfig: UwbSessionConfig? = null
+    //private var localConfig: UwbSessionConfig? = null
     private var readCharacteristic: CBMutableCharacteristic? = null
 
     // Track discovered peripherals for GATT client connections
@@ -48,10 +49,19 @@ actual class BleManager(
 
     /** Deliver a peer's serialized config to the app (single entry point, no duplicate dispatch). */
     private fun deliverRemoteConfig(peerId: String, bytes: ByteArray?) {
-        val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it) }
+        val remoteConfig = bytes?.let { UwbSessionConfig.fromByteArray(it, false) }
         if (remoteConfig != null) {
-            NSLog("BleManager: received config from $peerId")
-            configExchangedCallback?.invoke(peerId, remoteConfig)
+            val connectionLocalConfig=uwbManager.getConnectionConfig(peerId)
+            if(connectionLocalConfig != null){
+                val rangingRemoteConfig=if(remoteConfig.isOlder(connectionLocalConfig)){
+                     remoteConfig
+                }
+                else {
+                     connectionLocalConfig.copy(uwbAddress= remoteConfig.uwbAddress)
+                }
+                NSLog("received config from $peerId")
+                configExchangedCallback?.invoke(peerId, rangingRemoteConfig)
+            }
         } else {
             NSLog("BleManager: failed to parse config from $peerId")
         }
@@ -136,7 +146,7 @@ actual class BleManager(
 
                 // Cache peripheral (must keep strong reference for connection)
                 discoveredPeripherals[deviceId] = AccessoryDevice(didDiscoverPeripheral, profile)
-
+                uwbManager.createConnectionConfig(deviceId, profile?.exchange == ExchangeProtocol.AccessoryNotify)
                 NSLog("BleManager: Discovered $deviceName ($deviceId) profile=${profile?.name}")
                 deviceDiscoveredCallback?.invoke(deviceId, deviceName)
             }
@@ -352,7 +362,14 @@ actual class BleManager(
                 didReceiveReadRequest.characteristic.UUID == CBUUID.UUIDWithString(it.readFromUuid!!)
             }
             if (isReadChar) {
-                val configBytes = localConfig?.toByteArray() ?: ByteArray(0)
+                val peerId = didReceiveReadRequest.central.identifier.UUIDString                
+                var connectionLocalConfig:UwbSessionConfig?=uwbManager.getConnectionConfig(peerId)
+                    /*connectionLocalConfig = if(connectionLocalConfig==null){
+                           uwbManager.createConnectionConfig(peerId,false)
+                   } else {
+                           connectionLocalConfig
+                   }*/
+                val configBytes = connectionLocalConfig?.toByteArray() ?: ByteArray(0)
                 val offset = didReceiveReadRequest.offset.toInt()
                 if (offset < configBytes.size) {
                     val responseBytes = configBytes.copyOfRange(offset, configBytes.size)
@@ -455,8 +472,7 @@ actual class BleManager(
 
     // ---- Public API: GATT Server ----
 
-    actual fun startGattServer(localConfig: UwbSessionConfig) {
-        this.localConfig = localConfig
+    actual fun startGattServer() {
 
         if (peripheralManager == null) {
             peripheralManager = CBPeripheralManager(peripheralManagerDelegate, null)
@@ -477,14 +493,13 @@ actual class BleManager(
 
     actual fun stopGattServer() {
         peripheralManager?.removeAllServices()
-        localConfig = null
         readCharacteristic = null
         NSLog("BleManager: GATT server stopped")
     }
 
     // ---- Public API: GATT Client (config exchange) ----
 
-    actual fun connectAndExchangeConfig(peerId: String, localConfig: UwbSessionConfig) {
+    actual fun connectAndExchangeConfig(peerId: String, connectionConfig: UwbSessionConfig) {
         NSLog("BleManager: in connect and config")
         val peripheral = discoveredPeripherals[peerId]?.bleDevice
         if (peripheral == null) {
@@ -492,7 +507,7 @@ actual class BleManager(
             return
         }
 
-        pendingConfigs[peerId] = localConfig
+        pendingConfigs[peerId] = connectionConfig
         centralManager?.connectPeripheral(peripheral, null)
         NSLog("BleManager: Connecting to $peerId for config exchange")
     }
