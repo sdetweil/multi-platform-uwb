@@ -44,6 +44,9 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
     /** Static-STS key, generated once and reused so it is stable across a peer's BLE identities. */
     private var localSessionKey: ByteArray? = null
 
+    private var savedRangingParameters: RangingParameters? = null
+    var restarting: Boolean = false
+    var peerCountChanged :Boolean = false;
     /** Default channel and preamble — used when generating local config. */
     companion object {
         const val DEFAULT_CHANNEL = 9
@@ -141,35 +144,50 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
 
         val localConfig = getConnectionConfig(peerId)
 
-        val job = coroutineScope.launch {
-            try {
-                // Elect roles. Two controlee scopes set up but never range, so exactly one side must be
-                // controller. The session owner (smaller controlee UWB address, stable across BLE
-                // identities) is the controller; an accessory always leaves the phone as controller.
-                val isAccessory = remoteConfig.isAccessoryDevice
-                val amController = isAccessory || localConfig == null ||
-                        localConfig.ownsSessionOver(remoteConfig)
 
-                // Use the pre-created scope for our role, so we range with an address the peer already
-                // received (never mint a new scope/address after the exchange).
-                val scope = if (amController) controllerScope else controleeScope
+        // Elect roles. Two controlee scopes set up but never range, so exactly one side must be
+        // controller. The session owner (smaller controlee UWB address, stable across BLE
+        // identities) is the controller; an accessory always leaves the phone as controller.
+        val isAccessory = remoteConfig.isAccessoryDevice
+        val amController = isAccessory || localConfig == null ||
+                localConfig.ownsSessionOver(remoteConfig)
 
-                // Range against the peer's opposite-role address: the controller talks to the peer's
-                // controlee address ([uwbAddress]); the controlee talks to the peer's controller
-                // address ([controllerAddress]).
-                val peerAddressBytes = when {
-                    isAccessory -> remoteConfig.uwbAddress
-                    amController -> remoteConfig.uwbAddress
-                    else -> remoteConfig.controllerAddress ?: remoteConfig.uwbAddress
-                }
+        // Use the pre-created scope for our role, so we range with an address the peer already
+        // received (never mint a new scope/address after the exchange).
+        val scope = if (amController) controllerScope else controleeScope
 
-                // Session parameters come from the controller (owner); the controlee adopts them.
-                val paramsConfig = if (amController) (localConfig ?: remoteConfig) else remoteConfig
+        // Range against the peer's opposite-role address: the controller talks to the peer's
+        // controlee address ([uwbAddress]); the controlee talks to the peer's controller
+        // address ([controllerAddress]).
+        val peerAddressBytes = when {
+            isAccessory -> remoteConfig.uwbAddress
+            amController -> remoteConfig.uwbAddress
+            else -> remoteConfig.controllerAddress ?: remoteConfig.uwbAddress
+        }
 
-                val peerDevice = UwbDevice(UwbAddress(peerAddressBytes))
-                Log.d(TAG, "ranging peer device address is ${peerAddressBytes.toHexString()} (amController=$amController)")
+        // Session parameters come from the controller (owner); the controlee adopts them.
+        val paramsConfig = if (amController) (localConfig ?: remoteConfig) else remoteConfig
 
-                val rangingParameters: RangingParameters = RangingParameters(
+        Log.d(
+            TAG,
+            "Starting ranging with $peerId — session=${paramsConfig.sessionId.toHexString()} ch=${paramsConfig.channel} pai=${paramsConfig.preambleIndex}  peer=${peerAddressBytes.toHexString()} amController=$amController"
+        )
+        // if this is an accessory, send the config it should use now, as we have done all the pre-checking
+        if (remoteConfig.isAccessoryDevice) {
+            val message =
+                getConnectionConfig(peerId)?.let { byteArrayOf(ANDROID_ACCESSORY_CONFIGURE_AND_START) + it.toByteArray() }
+            Log.d(TAG, "sending config data message to accessory=${message?.toHexString()}")
+            message?.let { sendToPeerCallback?.invoke(peerId, it) }
+        }
+        val peerDevice = UwbDevice(UwbAddress(peerAddressBytes))
+        Log.d(
+            TAG,
+            "ranging peer device address is ${peerAddressBytes.toHexString()} (amController=$amController)"
+        )
+
+        if (savedRangingParameters == null) {
+            savedRangingParameters =
+                RangingParameters(
                     uwbConfigType = RangingParameters.CONFIG_UNICAST_DS_TWR,
                     sessionId = paramsConfig.sessionId,
                     subSessionId = 0,
@@ -179,70 +197,101 @@ actual class MultiplatformUwbManager(private val androidUwbManager: UwbManager? 
                         channel = paramsConfig.channel,
                         preambleIndex = paramsConfig.preambleIndex
                     ),
-                    peerDevices = listOf(peerDevice),
+                    peerDevices = mutableListOf(peerDevice),
                     updateRateType = RangingParameters.RANGING_UPDATE_RATE_AUTOMATIC
                 )
-
-                Log.d(
-                    TAG,
-                    "Starting ranging with $peerId — session=${paramsConfig.sessionId.toHexString()} ch=${paramsConfig.channel} pai=${paramsConfig.preambleIndex}  peer=${peerAddressBytes.toHexString()} amController=$amController"
-                )
-                // if this is an accessory, send the config it should use now, as we have done all the pre-checking
-                if(remoteConfig.isAccessoryDevice) {
-                    val message = getConnectionConfig(peerId)?.let { byteArrayOf(ANDROID_ACCESSORY_CONFIGURE_AND_START)+ it.toByteArray() }
+        } else {
+            peerCountChanged = true
+            val tempList = activeJobs
+            tempList.forEach { (peer, job) -> job.cancel()
+                activeJobs.remove(peer)
+                if (remoteConfig.isAccessoryDevice) {
+                    //sendToPeerCallback?.invoke(peer, byteArrayOf(NI_ACCESSORY_STOP))
+                    // sleep for 50ms??
+                    val message =
+                        getConnectionConfig(peer)?.let { byteArrayOf(ANDROID_ACCESSORY_CONFIGURE_AND_START) + it.toByteArray() }
                     Log.d(TAG, "sending config data message to accessory=${message?.toHexString()}")
-                    message?.let { sendToPeerCallback?.invoke(peerId, it) }
+                    message?.let { sendToPeerCallback?.invoke(peer, it) }
                 }
+            }
+            val previousDevices: MutableList<UwbDevice> = savedRangingParameters!!.peerDevices.toMutableList()
+            savedRangingParameters = RangingParameters(
+                uwbConfigType = RangingParameters.CONFIG_MULTICAST_DS_TWR,
+                sessionId = savedRangingParameters!!.sessionId,
+                subSessionId = 0,
+                sessionKeyInfo = savedRangingParameters!!.sessionKeyInfo,
+                subSessionKeyInfo = null,
+                complexChannel = savedRangingParameters!!.complexChannel,
+                peerDevices = previousDevices.plus(peerDevice),
+                updateRateType = savedRangingParameters!!.updateRateType
+            )
+        }
+        var job : Job? = null
+        do {
+            restarting = false
+            job = coroutineScope.launch {
 
+                Log.d(TAG, "job starting")
                 if (scope == null) {
                     errorCallback?.invoke("No UWB session scope for $peerId; initialize() must run first")
                     activeJobs.remove(peerId)
                     return@launch
                 }
-                scope.prepareSession(rangingParameters)
-                    .catch { exception ->
-                        errorCallback?.invoke("Ranging failed for $peerId: ${exception.message}")
-                    }
-                    .collect { result ->
-                        Log.d(TAG, "in collect")
-                        when (result) {
-                            is RangingResult.RangingResultPosition -> {
-                                Log.d(TAG,"Ranging position report")
-                                val distance = result.position.distance?.value
-                                if (distance != null) {
-                                    rangingCallback?.invoke(
-                                        peerId,
-                                        distance.toDouble(),
-                                        result.position.azimuth?.value?.toDouble(),
-                                        result.position.elevation?.value?.toDouble()
-                                    )
+
+                try {
+                    scope.prepareSession(savedRangingParameters!!)
+                        .catch { exception ->
+                            errorCallback?.invoke("Ranging failed for $peerId: ${exception.message}")
+                        }
+                        .collect { result ->
+                            Log.d(TAG, "in collect")
+                            when (result) {
+                                is RangingResult.RangingResultPosition -> {
+                                    Log.d(TAG, "Ranging position report ${peerId}")
+                                    val distance = result.position.distance?.value
+                                    if (distance != null) {
+                                        rangingCallback?.invoke(
+                                            peerId,
+                                            distance.toDouble(),
+                                            result.position.azimuth?.value?.toDouble(),
+                                            result.position.elevation?.value?.toDouble()
+                                        )
+                                    }
+                                }
+
+                                is RangingResult.RangingResultInitialized -> {
+                                    Log.d(TAG, "Ranging init ${peerId}")
+                                }
+
+                                is RangingResult.RangingResultPeerDisconnected -> {
+                                    Log.d(TAG, "peer disconnected ${peerId}")
+                                    errorCallback?.invoke("Peer $peerId disconnected")
+                                    activeJobs.remove(peerId)
+                                }
+
+                                else -> {
+                                    Log.d(TAG, "unexpected ranging result ${result}")
                                 }
                             }
-
-                            is RangingResult.RangingResultInitialized ->{
-                                Log.d(TAG,"Ranging init")
-                            }
-
-                            is RangingResult.RangingResultPeerDisconnected -> {
-                                Log.d(TAG,"peer disconnected ${peerId}")
-                                errorCallback?.invoke("Peer $peerId disconnected")
-                                activeJobs.remove(peerId)
-                            }
-
-                            else ->{
-                                Log.d(TAG,"unexpected ranging result ${result}")
-                            }
                         }
-                    }
+                    Log.d(TAG, "Ranging active (maybe) 2")
                 } catch (e: Exception) {
-                    Log.d(TAG,"Ranging startup failed, ${e.message}")
-                    errorCallback?.invoke("Failed to start ranging with $peerId: ${e.message}")
+
+                    if(peerCountChanged && e.message?.contains("cancelled") == true){
+                        Log.d(TAG, "Ranging startup restarting, ${e.message} ")
+                        peerCountChanged = false
+                        restarting = true
+                    } else {
+                        Log.d(TAG, "Ranging startup failed, ${e.message} ")
+                        errorCallback?.invoke("Failed to start ranging with $peerId: ${e.message}")
+                    }
                 }
-                Log.d(TAG,"Ranging active (maybe)")
+                Log.d(TAG, "Ranging active (maybe)")
             }
-            Log.d(TAG,"Ranging process starting for peer ${peerId}")
-            activeJobs[peerId] = job
-        }
+        } while (restarting)
+        Log.d(TAG, "Ranging process starting for peer ${savedRangingParameters?.peerDevices.toString()}")
+        activeJobs[peerId] = job
+    }
 
     actual suspend fun stopRanging(peerId: String) {
         activeJobs.remove(peerId)?.let { job ->
