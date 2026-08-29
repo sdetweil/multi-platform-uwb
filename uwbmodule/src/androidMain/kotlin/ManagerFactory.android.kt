@@ -11,7 +11,7 @@ actual class ManagerFactory(private val context: Context) {
     // One shared UWB manager so BleManager and DeviceDiscoveryManager see the same per-peer
     // scopes and connection configs (previously bridged via process-global static maps).
     private val uwbManager: MultiplatformUwbManager by lazy {
-        MultiplatformUwbManager(context.getSystemService(RangingManager::class.java))
+        MultiplatformUwbManager(context)
     }
 
     actual fun createUwbManager(): MultiplatformUwbManager = uwbManager
