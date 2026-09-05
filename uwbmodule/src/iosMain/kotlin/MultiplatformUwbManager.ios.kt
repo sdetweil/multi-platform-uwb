@@ -388,9 +388,11 @@ actual class MultiplatformUwbManager {
         override fun sessionWasSuspended(session: NISession) {
             val peerId = peerIdFor(session)
             NSLog("UwbManager: Session suspended for ${peerId}")
-            // Suspension is transient (backgrounding, or NI juggling several sessions), so do not
-            // tell an accessory to stop here: that made the suspension permanent, and the accessory
-            // only learns about a real stop from stopRanging. We re-run when the suspension ends.
+            val payload = byteArrayOf(NI_ACCESSORY_STOP)
+            NSLog("UwbManager: sending stop to $peerId (${payload.size} bytes)")
+            sendToPeerCallback?.invoke(peerId, payload)
+            // Suspension may be transient, may never come back. accessory now timing out and will fail
+            // resume sends new start , which will fail  if accessory already ranging
             dispatchToMain {
                 errorCallback?.invoke(peerId, "NI Session was suspended for $peerId")
             }
