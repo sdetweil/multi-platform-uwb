@@ -25,7 +25,8 @@ enum class EventType {
     ConfigExchangeComplete,
     RangingStarted,
     RangingUpdate,
-    Error
+    Error,
+    StatusUpdate
 }
 
 /**
@@ -133,6 +134,10 @@ class DeviceDiscoveryManager(
             // A per-peer failure only takes that peer out of Ranging, so stale cleanup can drop it
             // and a re-discovery can start over, while the other sessions carry on.
             if (peerId != null) scope.launch { onRangingError(peerId, error) }
+        }
+
+        multiplatformUwbManager.setStatusCallback { peerId, message ->
+            emitEvent(EventType.StatusUpdate,peerId,message)
         }
     }
 
